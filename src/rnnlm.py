@@ -1472,7 +1472,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         
         self.model.init_hiddens *= 0.0
         self.model.init_hiddens += 1.0
-#        if self.validation_features is not None:
+#        if self.validation_feature_file_name is not None:
 #            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
 #            print "cross-entropy before steepest descent is", cross_entropy
 #            print "perplexity before steepest descent is", perplexity
@@ -1579,7 +1579,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                     word_history[:-1] = word_history[1:]
                     counter += 1
                     
-            if self.validation_features is not None:
+            if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.features, self.labels, self.feature_sequence_lens, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
                 print "perplexity before steepest descent is", perplexity
@@ -1620,7 +1620,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         prev_step.init_zero_weights(self.model.get_architecture())
         gradient = RNNLM_Weight()
         gradient.init_zero_weights(self.model.get_architecture())
-        if self.validation_features is not None:
+        if self.validation_feature_file_name is not None:
             cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
             print "cross-entropy before steepest descent is", cross_entropy
             print "perplexity is", perplexity
@@ -1671,7 +1671,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 
                 start_frame = end_frame
                 
-            if self.validation_features is not None:
+            if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
                 print "perplexity is", perplexity
@@ -1690,7 +1690,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         print "Starting backprop using steepest descent"
         prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture())
-        if self.validation_features is not None:
+        if self.validation_feature_file_name is not None:
             cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
             print "cross-entropy before steepest descent is", cross_entropy
             print "perplexity is", perplexity
@@ -1743,7 +1743,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 del batch_labels
                 batch_index += self.backprop_batch_size
                 
-            if self.validation_features is not None:
+            if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
                 print "perplexity is", perplexity
@@ -1763,7 +1763,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         adagrad_weight.init_zero_weights(self.model.get_architecture())
         fudge_factor = 1.0
         adagrad_weight = adagrad_weight + fudge_factor
-#        if self.validation_features is not None:
+#        if self.validation_feature_file_name is not None:
 #            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
 #            print "cross-entropy before adagrad is", cross_entropy
 #            print "perplexity is", perplexity
@@ -1830,7 +1830,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 del batch_labels
                 batch_index += self.backprop_batch_size
                 
-            if self.validation_features is not None:
+            if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
                 print "perplexity is", perplexity
