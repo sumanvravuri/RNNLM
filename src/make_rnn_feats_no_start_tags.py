@@ -73,6 +73,7 @@ def read_data_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
     return feature_sequence_lengths, data_mat
 
 def read_next_label_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
+    print "reading labels to matrix...",
     proc = subprocess.Popen("wc -w " + data_fn + " | awk '{print $1}'", stdout=subprocess.PIPE, shell=True)
     (out, err) = proc.communicate()
     num_words = int(out.strip())
@@ -108,6 +109,7 @@ def read_next_label_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
             frame_in_sent = 0
 #            token_id = vocab_dict[
 #    print label_mat
+    print "DONE"
     return label_mat
 
 def save_feature_file(feature_fn, data, fsl):
@@ -130,7 +132,7 @@ if __name__ == "__main__":
     print "unknown token is included in training data is", unk_token_included
     vocab_dict = read_vocab_to_dict(vocab_dict_fn, unk_token_included)
     fsl, data = read_data_to_mat(input_file, vocab_dict, unk_token_included)
-    labels = read_next_label_to_mat(input_file, vocab_dict, unk_token_included)
     save_feature_file(output_feature_fn, data, fsl)
+    labels = read_next_label_to_mat(input_file, vocab_dict, unk_token_included)
     save_label_file(output_label_fn, labels)
     
