@@ -13,7 +13,7 @@ import scipy.optimize as sopt
 import math
 import copy
 import argparse
-from deep_neural_network import Vector_Math
+from Vector_Math import Vector_Math
 from scipy.special import expit
 
 class RNNLM_Weight(object):
@@ -1761,15 +1761,15 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         print "Starting backprop using steepest descent"
         adagrad_weight = RNNLM_Weight()
         adagrad_weight.init_zero_weights(self.model.get_architecture())
-        fudge_factor = 1.0
+        fudge_factor = 1.0E-5
         adagrad_weight = adagrad_weight + fudge_factor
-#        if self.validation_feature_file_name is not None:
-#            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
-#            print "cross-entropy before adagrad is", cross_entropy
-#            print "perplexity is", perplexity
-#            if self.l2_regularization_const > 0.0:
-#                print "regularized loss is", loss
-#            print "number correctly classified is", num_correct, "of", num_examples
+        if self.validation_feature_file_name is not None:
+            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+            print "cross-entropy before adagrad is", cross_entropy
+            print "perplexity is", perplexity
+            if self.l2_regularization_const > 0.0:
+                print "regularized loss is", loss
+            print "number correctly classified is", num_correct, "of", num_examples
         
 #        excluded_keys = {'bias':['0'], 'weights':[]}
 #        frame_table = np.cumsum(self.feature_sequence_lens)
