@@ -7,530 +7,12 @@ Created on Jun 3, 2013
 import sys
 import numpy as np
 import scipy.io as sp
-import scipy.linalg as sl
-import scipy.optimize as sopt
-#from scipy.special import import expit
-import math
 import copy
 import argparse
 from Vector_Math import Vector_Math
+import datetime
 from scipy.special import expit
-
-class RNNLM_Weight(object):
-    def __init__(self, init_hiddens = None, weights=None, bias=None, weight_type=None):
-        """num_layers
-        weights - actual Recurrent Neural Network weights, a dictionary with keys corresponding to layer, ie. weights['visible_hidden'], weights['hidden_hidden'], and weights['hidden_output'] each numpy array
-        bias - NN biases, again a dictionary stored as bias['visible'], bias['hidden'], bias['output'], etc.
-        weight_type - optional command indexed by same keys weights, possible optionals are 'rbm_gaussian_bernoullli', 'rbm_bernoulli_bernoulli'"""
-        self.valid_layer_types = dict()
-        self.valid_layer_types['visible_hidden'] = ['rbm_gaussian_bernoulli', 'rbm_bernoulli_bernoulli']
-        self.valid_layer_types['hidden_hidden'] = ['rbm_bernoulli_bernoulli']
-        self.valid_layer_types['hidden_output'] = ['logistic']
-        self.bias_keys = ['visible', 'hidden', 'output']
-        self.weights_keys = ['visible_hidden', 'hidden_hidden', 'hidden_output']
-        
-        if init_hiddens != None:
-            self.init_hiddens = init_hiddens
-        if weights == None:
-            self.weights = dict()
-        else:
-            self.weights = copy.deepcopy(weights)
-        if bias == None:
-            self.bias = dict()
-        else:
-            self.bias = copy.deepcopy(bias)
-        if weight_type == None:
-            self.weight_type = dict()
-        else:
-            self.weight_type = copy.deepcopy(weight_type)
-            
-    def clear(self):
-        self.num_layers = 0
-        self.weights.clear()
-        self.bias.clear()
-        self.weight_type.clear()
-        
-    def dot(self, nn_weight2, excluded_keys = {'bias': [], 'weights': []}):
-        if type(nn_weight2) is not RNNLM_Weight:
-            print "argument must be of type RNNLM_Weight... instead of type", type(nn_weight2), "Exiting now..."
-            sys.exit()
-        return_val = 0
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            return_val += np.sum(self.bias[key] * nn_weight2.bias[key])
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue
-            return_val += np.sum(self.weights[key] * nn_weight2.weights[key])
-        return return_val
-    
-    def __str__(self):
-        string = ""
-        for key in self.bias_keys:
-            string = string + "bias key " + key + "\n"
-            string = string + str(self.bias[key]) + "\n"
-        for key in self.weights_keys:
-            string = string + "weight key " + key + "\n"
-            string = string + str(self.weights[key]) + "\n"
-        return string
-    
-    def print_statistics(self):
-        for key in self.bias_keys:
-            print "min of bias[" + key + "] is", np.min(self.bias[key]) 
-            print "max of bias[" + key + "] is", np.max(self.bias[key])
-            print "mean of bias[" + key + "] is", np.mean(self.bias[key])
-            print "var of bias[" + key + "] is", np.var(self.bias[key]), "\n"
-        for key in self.weights_keys:
-            print "min of weights[" + key + "] is", np.min(self.weights[key]) 
-            print "max of weights[" + key + "] is", np.max(self.weights[key])
-            print "mean of weights[" + key + "] is", np.mean(self.weights[key])
-            print "var of weights[" + key + "] is", np.var(self.weights[key]), "\n"
-        
-        print "min of init_hiddens is", np.min(self.init_hiddens) 
-        print "max of init_hiddens is", np.max(self.init_hiddens)
-        print "mean of init_hiddens is", np.mean(self.init_hiddens)
-        print "var of init_hiddens is", np.var(self.init_hiddens), "\n"
-        
-    def norm(self, excluded_keys = {'bias': [], 'weights': []}, calc_init_hiddens=False):
-        squared_sum = 0
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            squared_sum += np.sum(self.bias[key] ** 2)
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue  
-            squared_sum += np.sum(self.weights[key] ** 2)
-        if calc_init_hiddens:
-            squared_sum += np.sum(self.init_hiddens ** 2)
-        return np.sqrt(squared_sum)
-    
-    def max(self, excluded_keys = {'bias': [], 'weights': []}, calc_init_hiddens=False):
-        max_val = -float('Inf')
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            max_val = max(np.max(self.bias[key]), max_val)
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue  
-            max_val = max(np.max(self.weights[key]), max_val)
-        if calc_init_hiddens:
-            max_val = max(np.max(self.init_hiddens), max_val)
-        return max_val
-    
-    def min(self, excluded_keys = {'bias': [], 'weights': []}, calc_init_hiddens=False):
-        min_val = float('Inf')
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            min_val = min(np.min(self.bias[key]), min_val)
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue  
-            min_val = min(np.min(self.weights[key]), min_val)
-        if calc_init_hiddens:
-            min_val = min(np.min(self.init_hiddens), min_val)
-        return min_val
-    
-    def clip(self, clip_min, clip_max, excluded_keys = {'bias': [], 'weights': []}, calc_init_hiddens=False):
-        nn_output = copy.deepcopy(self)
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            np.clip(self.bias[key], clip_min, clip_max, out=nn_output.bias[key])
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue  
-            np.clip(self.weights[key], clip_min, clip_max, out=nn_output.weights[key])
-        if calc_init_hiddens:
-            np.clip(self.init_hiddens, clip_min, clip_max, out=nn_output.init_hiddens)
-        return nn_output
-    
-    def get_architecture(self):
-        return [self.bias['visible'].size, self.bias['hidden'].size, self.bias['output'].size]
-    
-    def size(self, excluded_keys = {'bias': [], 'weights': []}, include_init_hiddens=True):
-        numel = 0
-        for key in self.bias_keys:
-            if key in excluded_keys['bias']:
-                continue
-            numel += self.bias[key].size
-        for key in self.weights_keys:
-            if key in excluded_keys['weights']:
-                continue  
-            numel += self.weights[key].size
-        if include_init_hiddens:
-            numel += self.init_hiddens.size
-        return numel
-    
-    def open_weights(self, weight_matrix_name): #completed
-        """the weight file format is very specific, it contains the following variables:
-        weights_visible_hidden, weights_hidden_hidden, weights_hidden_output,
-        bias_visible, bias_hidden, bias_output,
-        init_hiddens, 
-        weights_visible_hidden_type, weights_hidden_hidden_type, weights_hidden_output_type, etc...
-        everything else will be ignored"""
-        try:
-            weight_dict = sp.loadmat(weight_matrix_name)
-        except IOError:
-            print "Unable to open", weight_matrix_name, "exiting now"
-            sys.exit()
-        try:
-            self.bias['visible'] = weight_dict['bias_visible']
-        except KeyError:
-            print "bias_visible not found. bias_visible must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
-            sys.exit()
-        
-        try:
-            self.bias['hidden'] = weight_dict['bias_hidden']
-        except KeyError:
-            print "bias_hidden not found. bias_hidden must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
-            sys.exit()
-        
-        try:
-            self.bias['output'] = weight_dict['bias_output']
-        except KeyError:
-            print "bias_output not found. bias_output must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
-            sys.exit()
-        
-        #TODO: dump these inside of try
-        self.init_hiddens = weight_dict['init_hiddens']
-        self.weights['visible_hidden'] = weight_dict['weights_visible_hidden']
-        self.weights['hidden_hidden'] = weight_dict['weights_hidden_hidden']
-        self.weights['hidden_output'] = weight_dict['weights_hidden_output']
-        
-        self.weight_type['visible_hidden'] = 'rbm_bernoulli_bernoulli' #weight_dict['weights_visible_hidden_type'].encode('ascii', 'ignore')
-        self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli' #weight_dict['weights_hidden_hidden_type'].encode('ascii', 'ignore')
-        self.weight_type['hidden_output'] = 'logistic' #weight_dict['weights_hidden_output_type'].encode('ascii', 'ignore')
-        
-        del weight_dict
-        self.check_weights()
-        
-    def init_random_weights(self, architecture, initial_bias_max, initial_bias_min, initial_weight_max, initial_weight_min, seed=0): #completed, expensive, should be compiled
-        np.random.seed(seed)
-        
-        initial_bias_range = initial_bias_max - initial_bias_min
-        initial_weight_range = initial_weight_max - initial_weight_min
-#        self.bias['visible'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[0]))
-#        self.bias['hidden'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[1]))
-#        self.bias['output'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[2]))
-        
-        self.bias['visible'] = 0.2 * np.random.randn(1,architecture[0])
-        self.bias['hidden'] = 0.2 * np.random.randn(1,architecture[1])
-        self.bias['output'] = 0.2 * np.random.randn(1,architecture[2])
-        
-#        self.init_hiddens = np.random.random_sample((1,architecture[1])) #because of sigmoid non-linearity
-        self.init_hiddens =  0.2 * np.random.randn(1,architecture[1])
-#        self.weights['visible_hidden']=(initial_weight_min + initial_weight_range * 
-#                                        np.random.random_sample( (architecture[0],architecture[1]) ))
-#        self.weights['hidden_hidden']=(initial_weight_min + initial_weight_range * 
-#                                       np.random.random_sample( (architecture[1],architecture[1]) ))
-#        self.weights['hidden_output']=(initial_weight_min + initial_weight_range * 
-#                                       np.random.random_sample( (architecture[1],architecture[2]) ))
-        
-        self.weights['visible_hidden'] = 0.2 * np.random.randn( architecture[0],architecture[1]) 
-        self.weights['hidden_hidden'] = 0.2 * np.random.randn( architecture[1],architecture[1]) 
-        self.weights['hidden_output'] = 0.2 * np.random.randn( architecture[1],architecture[2]) 
-        
-        self.weight_type['visible_hidden'] = 'rbm_gaussian_bernoulli'
-        self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli'
-        self.weight_type['hidden_output'] = 'logistic'
-        
-        print "Finished Initializing Weights"
-        self.check_weights()
-        
-    def init_zero_weights(self, architecture, verbose=False):
-        self.init_hiddens = np.zeros((1,architecture[1]))
-        self.bias['visible'] = np.zeros((1,architecture[0]))
-        self.bias['hidden'] = np.zeros((1,architecture[1]))
-        self.bias['output'] = np.zeros((1,architecture[2]))
-        
-        self.init_hiddens = np.zeros((1,architecture[1]))
-         
-        self.weights['visible_hidden'] = np.zeros( (architecture[0],architecture[1]) )
-        self.weights['hidden_hidden'] = np.zeros( (architecture[1],architecture[1]) )
-        self.weights['hidden_output'] = np.zeros( (architecture[1],architecture[2]) )
-        
-        self.weight_type['visible_hidden'] = 'rbm_gaussian_bernoulli'
-        self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli'
-        self.weight_type['hidden_output'] = 'logistic'
-        if verbose:
-            print "Finished Initializing Weights"
-        self.check_weights(False)
-        
-    def check_weights(self, verbose=True): #need to check consistency of features with weights
-        """checks weights to see if following conditions are true
-        *feature dimension equal to number of rows of first layer (if weights are stored in n_rows x n_cols)
-        *n_cols of (n-1)th layer == n_rows of nth layer
-        if only one layer, that weight layer type is logistic, gaussian_bernoulli or bernoulli_bernoulli
-        check is biases match weight values
-        if multiple layers, 0 to (n-1)th layer is gaussian bernoulli RBM or bernoulli bernoulli RBM and last layer is logistic regression
-        """
-        if verbose:
-            print "Checking weights...",
-        
-        #check weight types
-        if self.weight_type['visible_hidden'] not in self.valid_layer_types['visible_hidden']:
-            print self.weight_type['visible_hidden'], "is not valid layer type. Must be one of the following:", self.valid_layer_types['visible_hidden'], "...Exiting now"
-            sys.exit()
-        if self.weight_type['hidden_hidden'] not in self.valid_layer_types['hidden_hidden']:
-            print self.weight_type['hidden_hidden'], "is not valid layer type. Must be one of the following:", self.valid_layer_types['hidden_hidden'], "...Exiting now"
-            sys.exit()
-        if self.weight_type['hidden_output'] not in self.valid_layer_types['hidden_output']:
-            print self.weight_type['hidden_output'], "is not valid layer type. Must be one of the following:", self.valid_layer_types['hidden_output'], "...Exiting now"
-            sys.exit()
-        
-        #check biases
-        if self.bias['visible'].shape[1] != self.weights['visible_hidden'].shape[0]:
-            print "Number of visible bias dimensions: ", self.bias['visible'].shape[1],
-            print " of layer visible does not equal visible weight dimensions ", self.weights['visible_hidden'].shape[0], "... Exiting now"
-            sys.exit()
-            
-        if self.bias['output'].shape[1] != self.weights['hidden_output'].shape[1]:
-            print "Number of visible bias dimensions: ", self.bias['visible'].shape[1],
-            print " of layer visible does not equal output weight dimensions ", self.weights['hidden_output'].shape[1], "... Exiting now"
-            sys.exit()
-        
-        if self.bias['hidden'].shape[1] != self.weights['visible_hidden'].shape[1]:
-            print "Number of hidden bias dimensions: ", self.bias['hidden'].shape[1],
-            print " of layer 0 does not equal hidden weight dimensions ", self.weights['visible_hidden'].shape[1], " of visible_hidden layer ... Exiting now"
-            sys.exit()
-        if self.bias['hidden'].shape[1] != self.weights['hidden_output'].shape[0]:
-            print "Number of hidden bias dimensions: ", self.bias['hidden'].shape[1],
-            print " of layer 0 does not equal hidden weight dimensions ", self.weights['hidden_output'].shape[0], "of hidden_output layer... Exiting now"
-            sys.exit()
-        if self.bias['hidden'].shape[1] != self.weights['hidden_hidden'].shape[0]:
-            print "Number of hidden bias dimensions: ", self.bias['hidden'].shape[1],
-            print " of layer 0 does not equal input weight dimensions ", self.weights['hidden_hidden'].shape[0], " of hidden_hidden layer... Exiting now"
-            sys.exit()
-        if self.bias['hidden'].shape[1] != self.weights['hidden_hidden'].shape[1]:
-            print "Number of hidden bias dimensions: ", self.bias['hidden'].shape[1],
-            print " of layer 0 does not equal output weight dimensions ", self.weights['hidden_hidden'].shape[1], " hidden_hidden layer... Exiting now"
-            sys.exit()
-        if self.bias['hidden'].shape[1] != self.init_hiddens.shape[1]:
-            print "dimensionality of hidden bias", self.bias['hidden'].shape[1], "and the initial hiddens", self.init_hiddens.shape[1], "do not match. Exiting now."
-            sys.exit()
-            
-        #check weights
-        if self.weights['visible_hidden'].shape[1] != self.weights['hidden_hidden'].shape[0]:
-            print "Dimensionality of visible_hidden", self.weights['visible_hidden'].shape, "does not match dimensionality of hidden_hidden", "\b:",self.weights['hidden_hidden'].shape
-            print "The second dimension of visible_hidden must equal the first dimension of hidden_hidden layer"
-            sys.exit()
-        
-        if self.weights['hidden_hidden'].shape[1] != self.weights['hidden_hidden'].shape[0]:
-            print "Dimensionality of hidden_hidden", self.weights['hidden_hidden'].shape, "is not square, which it must be. Exiting now..."
-            sys.exit()
-        
-        if self.weights['hidden_hidden'].shape[1] != self.weights['hidden_output'].shape[0]:
-            print "Dimensionality of hidden_hidden", self.weights['visible_hidden'].shape, "does not match dimensionality of hidden_output", "\b:",self.weights['hidden_hidden'].shape
-            print "The second dimension of hidden_hidden must equal the first dimension of hidden_output layer"
-            sys.exit()
-        if self.weights['hidden_hidden'].shape[1] != self.init_hiddens.shape[1]:
-            print "dimensionality of hidden_hidden weights", self.weights['hidden_hidden'].shape[1], "and the initial hiddens", self.init_hiddens.shape[1], "do not match. Exiting now."
-            sys.exit() 
-        
-        if verbose:
-            print "seems copacetic"
-            
-    def write_weights(self, output_name): #completed
-        weight_dict = dict()
-        weight_dict['bias_visible'] = self.bias['visible']
-        weight_dict['bias_hidden'] = self.bias['hidden']
-        weight_dict['bias_output'] = self.bias['output']
-        
-        weight_dict['weights_visible_hidden'] = self.weights['visible_hidden']
-        weight_dict['weights_hidden_hidden'] = self.weights['hidden_hidden']
-        weight_dict['weights_hidden_output'] = self.weights['hidden_output']
-        weight_dict['init_hiddens'] = self.init_hiddens
-        try:
-            sp.savemat(output_name, weight_dict, oned_as='column')
-        except IOError:
-            print "Unable to save ", self.output_name, "... Exiting now"
-            sys.exit()
-        else:
-            print output_name, "successfully saved"
-            del weight_dict
-
-    def assign_weights(self,other):
-        if self.get_architecture() != other.get_architecture():
-            raise ValueError("Neural net models do not match... Exiting now")
-        
-        for key in self.bias_keys:
-            self.bias[key][:] = other.bias[key][:]
-        for key in self.weights_keys:
-            self.weights[key][:] = other.weights[key][:]
-        self.init_hiddens[:] = self.init_hiddens
-
-    def __neg__(self):
-        nn_output = copy.deepcopy(self)
-        for key in self.bias_keys:
-            nn_output.bias[key] = -self.bias[key]
-        for key in self.weights_keys:
-            nn_output.weights[key] = -self.weights[key]
-        nn_output.init_hiddens = -self.init_hiddens
-        return nn_output
-    
-    def __add__(self,addend):
-        nn_output = copy.deepcopy(self)
-        if type(addend) is RNNLM_Weight:
-            if self.get_architecture() != addend.get_architecture():
-                print "Neural net models do not match... Exiting now"
-                sys.exit()
-            
-            for key in self.bias_keys:
-                nn_output.bias[key] = self.bias[key] + addend.bias[key]
-            for key in self.weights_keys:
-                nn_output.weights[key] = self.weights[key] + addend.weights[key]
-            nn_output.init_hiddens = self.init_hiddens + addend.init_hiddens
-            return nn_output
-        #otherwise type is scalar
-        addend = float(addend)
-        for key in self.bias_keys:
-            nn_output.bias[key] = self.bias[key] + addend
-        for key in self.weights_keys:
-            nn_output.weights[key] = self.weights[key] + addend
-        nn_output.init_hiddens = self.init_hiddens + addend
-        return nn_output
-        
-    def __sub__(self,subtrahend):
-        nn_output = copy.deepcopy(self)
-        if type(subtrahend) is RNNLM_Weight:
-            if self.get_architecture() != subtrahend.get_architecture():
-                print "Neural net models do not match... Exiting now"
-                sys.exit()
-            
-            for key in self.bias_keys:
-                nn_output.bias[key] = self.bias[key] - subtrahend.bias[key]
-            for key in self.weights_keys:
-                nn_output.weights[key] = self.weights[key] - subtrahend.weights[key]
-            nn_output.init_hiddens = self.init_hiddens - subtrahend.init_hiddens
-            return nn_output
-        #otherwise type is scalar
-        subtrahend = float(subtrahend)
-        for key in self.bias_keys:
-            nn_output.bias[key] = self.bias[key] - subtrahend
-        for key in self.weights_keys:
-            nn_output.weights[key] = self.weights[key] - subtrahend
-        nn_output.init_hiddens = self.init_hiddens - subtrahend
-        return nn_output
-    
-    def __mul__(self, multiplier):
-        #if type(scalar) is not float and type(scalar) is not int:
-        #    print "__mul__ must be by a float or int. Instead it is type", type(scalar), "Exiting now"
-        #    sys.exit()
-        nn_output = copy.deepcopy(self)
-        if type(multiplier) is RNNLM_Weight:
-            for key in self.bias_keys:
-                nn_output.bias[key] = self.bias[key] * multiplier.bias[key]
-            for key in self.weights_keys:
-                nn_output.weights[key] = self.weights[key] * multiplier.weights[key]
-            nn_output.init_hiddens = self.init_hiddens * multiplier.init_hiddens
-            return nn_output
-        #otherwise scalar type
-        multiplier = float(multiplier)
-        
-        for key in self.bias_keys:
-            nn_output.bias[key] = self.bias[key] * multiplier
-        for key in self.weights_keys:
-            nn_output.weights[key] = self.weights[key] * multiplier
-        nn_output.init_hiddens = self.init_hiddens * multiplier
-        return nn_output
-    
-    def __div__(self, divisor):
-        #if type(scalar) is not float and type(scalar) is not int:
-        #    print "Divide must be by a float or int. Instead it is type", type(scalar), "Exiting now"
-        #    sys.exit()
-        nn_output = copy.deepcopy(self)
-        if type(divisor) is RNNLM_Weight:
-            for key in self.bias_keys:
-                nn_output.bias[key] = self.bias[key] / divisor.bias[key]
-            for key in self.weights_keys:
-                nn_output.weights[key] = self.weights[key] / divisor.weights[key]
-            nn_output.init_hiddens = self.init_hiddens / divisor.init_hiddens
-            return nn_output
-        #otherwise scalar type
-        divisor = float(divisor)
-        
-        for key in self.bias_keys:
-            nn_output.bias[key] = self.bias[key] / divisor
-        for key in self.weights_keys:
-            nn_output.weights[key] = self.weights[key] / divisor
-        nn_output.init_hiddens = self.init_hiddens / divisor
-        return nn_output
-    
-    def __iadd__(self, nn_weight2):
-        if type(nn_weight2) is not RNNLM_Weight:
-            print "argument must be of type RNNLM_Weight... instead of type", type(nn_weight2), "Exiting now..."
-            sys.exit()
-        if self.get_architecture() != nn_weight2.get_architecture():
-            print "Neural net models do not match... Exiting now"
-            sys.exit()
-
-        for key in self.bias_keys:
-            self.bias[key] += nn_weight2.bias[key]
-        for key in self.weights_keys:
-            self.weights[key] += nn_weight2.weights[key]
-        self.init_hiddens += nn_weight2.init_hiddens
-        return self
-    
-    def __isub__(self, nn_weight2):
-        if type(nn_weight2) is not RNNLM_Weight:
-            print "argument must be of type RNNLM_Weight... instead of type", type(nn_weight2), "Exiting now..."
-            sys.exit()
-        if self.get_architecture() != nn_weight2.get_architecture():
-            print "Neural net models do not match... Exiting now"
-            sys.exit()
-
-        for key in self.bias_keys:
-            self.bias[key] -= nn_weight2.bias[key]
-        for key in self.weights_keys:
-            self.weights[key] -= nn_weight2.weights[key]
-        self.init_hiddens -= nn_weight2.init_hiddens
-        return self
-    
-    def __imul__(self, scalar):
-        #if type(scalar) is not float and type(scalar) is not int:
-        #    print "__imul__ must be by a float or int. Instead it is type", type(scalar), "Exiting now"
-        #    sys.exit()
-        scalar = float(scalar)
-        for key in self.bias_keys:
-            self.bias[key] *= scalar
-        for key in self.weights_keys:
-            self.weights[key] *= scalar
-        self.init_hiddens *= scalar
-        return self
-    
-    def __idiv__(self, scalar):
-        scalar = float(scalar)
-        for key in self.bias_keys:
-            self.bias[key] /= scalar
-        for key in self.weights_keys:
-            self.weights[key] /= scalar
-        self.init_hiddens /= scalar
-        return self
-    
-    def __pow__(self, scalar):
-        if scalar == 2:
-            return self * self
-        scalar = float(scalar)
-        nn_output = copy.deepcopy(self)
-        for key in self.bias_keys:
-            nn_output.bias[key] = self.bias[key] ** scalar
-        for key in self.weights_keys:
-            nn_output.weights[key] = self.weights[key] ** scalar
-        nn_output.init_hiddens = nn_output.init_hiddens ** scalar
-        return nn_output
-    
-    def __copy__(self):
-        return RNNLM_Weight(self.init_hiddens, self.weights, self.bias, self.weight_type)
-    
-    def __deepcopy__(self, memo):
-        return RNNLM_Weight(copy.deepcopy(self.init_hiddens, memo), copy.deepcopy(self.weights,memo), 
-                                     copy.deepcopy(self.bias,memo), copy.deepcopy(self.weight_type,memo))
-        
-
+from RNNLM_Weight import RNNLM_Weight
 
 class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
     """features are stored in format max_seq_len x nseq x nvis where n_max_obs is the maximum number of observations per sequence
@@ -1092,6 +574,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
     def calculate_gradient_single_batch(self, batch_inputs, batch_labels, gradient_weights, hiddens = None, outputs = None, check_gradient=False, 
                                         model=None, l2_regularization_const = 0.0, return_cross_entropy = False): 
         #need to check regularization
+        #TO DO: fix gradient when there is only a single word (empty?)
         #calculate gradient with particular Neural Network model. If None is specified, will use current weights (i.e., self.model)
         batch_size = batch_labels.size
         if model == None:
@@ -1101,7 +584,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         #derivative of log(cross-entropy softmax)
         batch_indices = np.arange(batch_size)
         gradient_weights *= 0.0
-        backward_inputs = copy.deepcopy(outputs)
+        backward_inputs = outputs
 #        print batch_inputs
 #        print batch_labels
 #        print batch_indices
@@ -1112,7 +595,8 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #        gradient_weights = RNNLM_Weight()
 #        gradient_weights.init_zero_weights(self.model.get_architecture(), verbose=False)
         
-        gradient_weights.bias['output'][0] = np.sum(backward_inputs, axis=0)
+#        gradient_weights.bias['output'][0] = np.sum(backward_inputs, axis=0)
+        np.sum(backward_inputs, axis=0, out = gradient_weights.bias['output'][0])
         np.dot(hiddens.T, backward_inputs, out = gradient_weights.weights['hidden_output'])
 #        backward_inputs = outputs - batch_unflattened_labels
         pre_nonlinearity_hiddens = np.dot(backward_inputs[batch_size-1,:], model.weights['hidden_output'].T) 
@@ -1121,9 +605,10 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #        if structural_damping_const > 0.0:
 #            pre_nonlinearity_hiddens += structural_damping_const * hidden_deriv[n_obs-1,:,:]
 #        output_model.weights['visible_hidden'] += np.dot(visibles[n_obs-1,:,:].T, pre_nonlinearity_hiddens)
-        gradient_weights.weights['visible_hidden'][batch_inputs[batch_size-1]] += pre_nonlinearity_hiddens
-        gradient_weights.weights['hidden_hidden'] += np.outer(hiddens[batch_size-2,:], pre_nonlinearity_hiddens)
-        gradient_weights.bias['hidden'][0] += pre_nonlinearity_hiddens
+        if batch_size > 1:
+            gradient_weights.weights['visible_hidden'][batch_inputs[batch_size-1]] += pre_nonlinearity_hiddens
+            gradient_weights.weights['hidden_hidden'] += np.outer(hiddens[batch_size-2,:], pre_nonlinearity_hiddens)
+            gradient_weights.bias['hidden'][0] += pre_nonlinearity_hiddens
         for observation_index in range(batch_size-2,0,-1):
             pre_nonlinearity_hiddens = ((np.dot(backward_inputs[observation_index,:], model.weights['hidden_output'].T) + 
                                          np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T))
@@ -1139,14 +624,16 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             gradient_weights.weights['hidden_hidden'] += np.outer(hiddens[observation_index-1,:], pre_nonlinearity_hiddens)
             gradient_weights.bias['hidden'][0] += pre_nonlinearity_hiddens
         
-        pre_nonlinearity_hiddens = ((np.dot(backward_inputs[0,:], model.weights['hidden_output'].T) + np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T))
-                                    * hiddens[0,:] * (1 - hiddens[0,:]))
+        if batch_size > 1:
+            pre_nonlinearity_hiddens = ((np.dot(backward_inputs[0,:], model.weights['hidden_output'].T) 
+                                         + np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T))
+                                        * hiddens[0,:] * (1 - hiddens[0,:]))
         gradient_weights.weights['visible_hidden'][batch_inputs[0]] += pre_nonlinearity_hiddens# += np.dot(visibles[0,:,:].T, pre_nonlinearity_hiddens)
         gradient_weights.weights['hidden_hidden'] += np.outer(model.init_hiddens, pre_nonlinearity_hiddens) #np.dot(np.tile(model.init_hiddens, (pre_nonlinearity_hiddens.shape[0],1)).T, pre_nonlinearity_hiddens)
         gradient_weights.bias['hidden'][0] += pre_nonlinearity_hiddens
         gradient_weights.init_hiddens[0] = np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T)
 #        gradient_weights = self.backward_pass(backward_inputs, hiddens, batch_inputs, model)
-        
+        backward_inputs[batch_indices, batch_labels] += 1.0
         gradient_weights /= batch_size
         
         if l2_regularization_const > 0.0:
@@ -1616,6 +1103,8 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
      
     def backprop_steepest_descent_single_batch(self):
         print "Starting backprop using steepest descent"
+        start_time = datetime.datetime.now()
+        print "Training started at", start_time
         prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture())
         gradient = RNNLM_Weight()
@@ -1632,6 +1121,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #        frame_table = np.cumsum(self.feature_sequence_lens)
         for epoch_num in range(len(self.steepest_learning_rate)):
             print "At epoch", epoch_num+1, "of", len(self.steepest_learning_rate), "with learning rate", self.steepest_learning_rate[epoch_num]
+            print "Training for epoch started at", datetime.datetime.now()
             start_frame = 0
             end_frame = 0
             cross_entropy = 0.0
@@ -1670,7 +1160,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #                prev_step *= -self.steepest_learning_rate[epoch_num]
                 
                 start_frame = end_frame
-                
+            print "Training for epoch finished at", datetime.datetime.now()
             if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
@@ -1683,9 +1173,10 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             sys.stdout.write("\r                                                                \r") #clear line
             if self.save_each_epoch:
                 self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))           
-            
-    
-    
+            print "Epoch finished at", datetime.datetime.now()
+        end_time = datetime.datetime.now()
+        print "Training finished at", end_time, "and ran for", end_time - start_time
+        
     def backprop_steepest_descent(self):
         print "Starting backprop using steepest descent"
         prev_step = RNNLM_Weight()
@@ -1756,12 +1247,99 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             if self.save_each_epoch:
                 self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
 
-
-    def backprop_adagrad(self):
-        print "Starting backprop using steepest descent"
+    def backprop_adagrad_single_batch(self):
+        print "Starting backprop using adagrad"
         adagrad_weight = RNNLM_Weight()
         adagrad_weight.init_zero_weights(self.model.get_architecture())
-        fudge_factor = 1.0E-5
+        
+        buffer_weight = RNNLM_Weight()
+        buffer_weight.init_zero_weights(self.model.get_architecture())
+        
+        fudge_factor = 1.0
+        adagrad_weight = adagrad_weight + fudge_factor
+        gradient = RNNLM_Weight()
+        gradient.init_zero_weights(self.model.get_architecture())
+#        if self.validation_feature_file_name is not None:
+#            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+#            print "cross-entropy before steepest descent is", cross_entropy
+#            print "perplexity is", perplexity
+#            if self.l2_regularization_const > 0.0:
+#                print "regularized loss is", loss
+#            print "number correctly classified is", num_correct, "of", num_examples
+        
+#        excluded_keys = {'bias':['0'], 'weights':[]}
+#        frame_table = np.cumsum(self.feature_sequence_lens)
+        for epoch_num in range(len(self.steepest_learning_rate)):
+            print "At epoch", epoch_num+1, "of", len(self.steepest_learning_rate), "with learning rate", self.steepest_learning_rate[epoch_num]
+            start_frame = 0
+            end_frame = 0
+            cross_entropy = 0.0
+            num_examples = 0
+#            if hasattr(self, 'momentum_rate'):
+#                momentum_rate = self.momentum_rate[epoch_num]
+#                print "momentum is", momentum_rate
+#            else:
+#                momentum_rate = 0.0
+            for batch_index, feature_sequence_len in enumerate(self.feature_sequence_lens):
+                end_frame = start_frame + feature_sequence_len
+                batch_features = self.features[:feature_sequence_len, batch_index]
+                batch_labels = self.labels[start_frame:end_frame,1]
+#                print ""
+#                print batch_index
+#                print batch_features
+#                print batch_labels
+                cur_xent = self.calculate_gradient_single_batch(batch_features, batch_labels, gradient, return_cross_entropy = True, 
+                                                                check_gradient = False)
+#                print self.model.norm()
+#                print gradient.norm()
+                if self.l2_regularization_const > 0.0:
+                    buffer_weight.assign_weights(self.model)
+                    buffer_weight *= self.l2_regularization_const
+                    gradient += buffer_weight
+                buffer_weight.assign_weights(gradient)
+#                print gradient.init_hiddens
+                buffer_weight **= 2.0
+                adagrad_weight += buffer_weight
+#                print adagrad_weight.init_hiddens
+                buffer_weight.assign_weights(adagrad_weight)
+                buffer_weight **= 0.5
+#                print buffer_weight.init_hiddens
+                gradient /= buffer_weight
+#                print gradient.init_hiddens
+                cross_entropy += cur_xent 
+                per_done = float(batch_index)/self.num_sequences*100
+                sys.stdout.write("\r                                                                \r") #clear line
+                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
+                ppp = cross_entropy / end_frame
+                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
+                gradient *= -self.steepest_learning_rate[epoch_num]
+                self.model += gradient #/ batch_size
+#                if momentum_rate > 0.0:
+#                    prev_step *= momentum_rate
+#                    self.model += prev_step
+#                prev_step.assign_weights(gradient)
+#                prev_step *= -self.steepest_learning_rate[epoch_num]
+                
+                start_frame = end_frame
+                
+            if self.validation_feature_file_name is not None:
+                cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+                print "cross-entropy at the end of the epoch is", cross_entropy
+                print "perplexity is", perplexity
+                if self.l2_regularization_const > 0.0:
+                    print "regularized loss is", loss
+                print "number correctly classified is", num_correct, "of", num_examples
+                
+            sys.stdout.write("\r100.0% done \r")
+            sys.stdout.write("\r                                                                \r") #clear line
+            if self.save_each_epoch:
+                self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))  
+
+    def backprop_adagrad(self):
+        print "Starting backprop using adagrad"
+        adagrad_weight = RNNLM_Weight()
+        adagrad_weight.init_zero_weights(self.model.get_architecture())
+        fudge_factor = 1.0
         adagrad_weight = adagrad_weight + fudge_factor
         if self.validation_feature_file_name is not None:
             cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
@@ -1773,7 +1351,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         
 #        excluded_keys = {'bias':['0'], 'weights':[]}
 #        frame_table = np.cumsum(self.feature_sequence_lens)
-        first_batch = True
+#        first_batch = True
         for epoch_num in range(len(self.steepest_learning_rate)):
             print "At epoch", epoch_num+1, "of", len(self.steepest_learning_rate), "with learning rate", self.steepest_learning_rate[epoch_num]
             batch_index = 0
