@@ -1,4 +1,3 @@
-
 import scipy.io as sio
 import subprocess
 import numpy as np
@@ -7,9 +6,10 @@ import sys
 def read_vocab_to_dict(vocab_list_fn, unknown_tag_included = True):
     """
     given a vocab list with out of vocabulary key and no start and stop tags, returns a vocabulary dictionary to map keys to values
+    unknown_tag_included means the unk token is included in the dictionary, if false, it generates one for you
     return vocab_dict
     """
-    print "Creating dictionary...", 
+    print "Creating dictionary... ", 
     vocab_dict = dict()
     val = 0
     with open(vocab_list_fn) as fpi:
@@ -19,8 +19,9 @@ def read_vocab_to_dict(vocab_list_fn, unknown_tag_included = True):
             val += 1
 
     vocab_dict['<s>'] = val
+    vocab_dict['</s>'] = val + 1
     if not unknown_tag_included:
-        vocab_dict['<unk>'] = val + 1
+        vocab_dict['<unk>'] = val + 2
     print "DONE"
     return vocab_dict
 
@@ -43,7 +44,7 @@ def read_data_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
     proc = subprocess.Popen("wc -l " + data_fn + " | awk '{print $1}'", stdout=subprocess.PIPE, shell=True)
     (out, err) = proc.communicate()
     num_sents = int(out.strip()) 
-#    num_words += 2 * num_sents #for start and stop tags
+    num_words += num_sents #for start and stop tags
     vocab_size = len(vocab_dict)
 
     max_seq_len = max_sequence_len(data_fn)
@@ -54,7 +55,9 @@ def read_data_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
     frame_in_sent = 0
     with open(data_fn) as fpi:
         for line in fpi:
-            tokens = ['<s>'] + line.strip().split(" ")[:-1]
+            tokens = ['<s>'] + line.strip().split(" ")
+            if len(tokens) == 2 and '' in tokens:
+                del tokens[1]
             for token in tokens:
                 if not unknown_tag_included:
                     if token not in vocab_dict:
@@ -80,7 +83,7 @@ def read_next_label_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
     proc = subprocess.Popen("wc -l " + data_fn + " | awk '{print $1}'", stdout=subprocess.PIPE, shell=True)
     (out, err) = proc.communicate()
     num_sents = int(out.strip()) 
-#    num_words += 2 * num_sents #for start and stop tags
+    num_words += num_sents #for stop tags
     vocab_size = len(vocab_dict)
 
     label_mat = np.zeros((num_words, 2), dtype=np.int32)
@@ -91,7 +94,9 @@ def read_next_label_to_mat(data_fn, vocab_dict, unknown_tag_included = True):
     with open(data_fn) as fpi:
         for line in fpi:
             tokens = line.strip().split(" ")
-            print tokens
+            if len(tokens) == 1 and '' in tokens:
+                del tokens[0]
+            tokens = tokens + ['</s>']
             for token in tokens:
                 if not unknown_tag_included:
                     if token not in vocab_dict:
@@ -132,7 +137,7 @@ if __name__ == "__main__":
     print "unknown token is included in training data is", unk_token_included
     vocab_dict = read_vocab_to_dict(vocab_dict_fn, unk_token_included)
     fsl, data = read_data_to_mat(input_file, vocab_dict, unk_token_included)
-    save_feature_file(output_feature_fn, data, fsl)
     labels = read_next_label_to_mat(input_file, vocab_dict, unk_token_included)
+    save_feature_file(output_feature_fn, data, fsl)
     save_label_file(output_label_fn, labels)
     

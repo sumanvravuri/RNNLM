@@ -225,7 +225,7 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
             print "labels need to be in (n_samples,2) format and the shape of labels is ", self.labels.shape, "... Exiting now"
             sys.exit()
         if self.labels.shape[0] != sum(self.feature_sequence_lens):
-            print "Number of examples in feature file: ", sum(self.feature_sequence_lens), " does not equal size of label file, ", self.labels.size, "... Exiting now"
+            print "Number of examples in feature file: ", sum(self.feature_sequence_lens), " does not equal size of label file, ", self.labels.shape[0], "... Exiting now"
             sys.exit()
 #        if  [i for i in np.unique(self.labels)] != range(np.max(self.labels)+1):
 #            print "Labels need to be in the form 0,1,2,....,n,... Exiting now"
