@@ -11,7 +11,7 @@ import argparse
 from Vector_Math import Vector_Math
 
 class RNNLM_Weight(object):
-    def __init__(self, init_hiddens = None, weights=None, bias=None, weight_type=None):
+    def __init__(self, init_hiddens = None, weights=None, bias=None, weight_type=None, nonlinearity = 'sigmoid'):
         """num_layers
         weights - actual Recurrent Neural Network weights, a dictionary with keys corresponding to layer, ie. weights['visible_hidden'], weights['hidden_hidden'], and weights['hidden_output'] each numpy array
         bias - NN biases, again a dictionary stored as bias['visible'], bias['hidden'], bias['output'], etc.
@@ -22,7 +22,10 @@ class RNNLM_Weight(object):
         self.valid_layer_types['hidden_output'] = ['logistic']
         self.bias_keys = ['visible', 'hidden', 'output']
         self.weights_keys = ['visible_hidden', 'hidden_hidden', 'hidden_output']
-        
+        self.nonlinearity = nonlinearity
+        if self.nonlinearity not in ['sigmoid', 'relu', 'tanh']:
+            print "nonlinearity must be sigmoid, relu, or tanh, but is", self.nonlinearity
+            raise ValueError
         if init_hiddens != None:
             self.init_hiddens = init_hiddens
         if weights == None:
@@ -195,6 +198,11 @@ class RNNLM_Weight(object):
         self.weights['visible_hidden'] = weight_dict['weights_visible_hidden']
         self.weights['hidden_hidden'] = weight_dict['weights_hidden_hidden']
         self.weights['hidden_output'] = weight_dict['weights_hidden_output']
+        self.nonlinearity = weight_dict['nonlinearity'][0]
+        if 'weights_visible_output' in weight_dict:
+            self.weights['visible_output'] = weight_dict['weights_visible_output']
+            if 'visible_output' not in self.weights_keys:
+                self.weights_keys += ['visible_output']
         
         self.weight_type['visible_hidden'] = 'rbm_bernoulli_bernoulli' #weight_dict['weights_visible_hidden_type'].encode('ascii', 'ignore')
         self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli' #weight_dict['weights_hidden_hidden_type'].encode('ascii', 'ignore')
@@ -203,11 +211,20 @@ class RNNLM_Weight(object):
         del weight_dict
         self.check_weights()
         
-    def init_random_weights(self, architecture, initial_bias_max, initial_bias_min, initial_weight_max, initial_weight_min, seed=0): #completed, expensive, should be compiled
+    def init_random_weights(self, architecture, 
+#                            initial_bias_max, initial_bias_min, initial_weight_max, initial_weight_min, 
+                            seed=0, maxent=False,
+                            nonlinearity = None): #completed, expensive, should be compiled
         np.random.seed(seed)
-        
-        initial_bias_range = initial_bias_max - initial_bias_min
-        initial_weight_range = initial_weight_max - initial_weight_min
+        if nonlinearity is not None:
+            if nonlinearity not in ['sigmoid', 'relu', 'tanh']:
+                error_string = "nonlinearity %s is not acceptable. It can be either sigmoid, relu, tanh" % nonlinearity
+                raise ValueError(error_string)
+            else:
+                self.nonlinearity = nonlinearity
+                
+#        initial_bias_range = initial_bias_max - initial_bias_min
+#        initial_weight_range = initial_weight_max - initial_weight_min
 #        self.bias['visible'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[0]))
 #        self.bias['hidden'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[1]))
 #        self.bias['output'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[2]))
@@ -227,7 +244,11 @@ class RNNLM_Weight(object):
         
         self.weights['visible_hidden'] = 0.2 * np.random.randn( architecture[0],architecture[1]) 
         self.weights['hidden_hidden'] = 0.2 * np.random.randn( architecture[1],architecture[1]) 
-        self.weights['hidden_output'] = 0.2 * np.random.randn( architecture[1],architecture[2]) 
+        self.weights['hidden_output'] = 0.2 * np.random.randn( architecture[1],architecture[2])
+        if maxent:
+            self.weights['visible_output'] = 0.2 * np.random.randn( architecture[0],architecture[2])
+            if 'visible_output' not in self.weights_keys:
+                self.weights_keys += ['visible_output']
         
         self.weight_type['visible_hidden'] = 'rbm_gaussian_bernoulli'
         self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli'
@@ -236,7 +257,13 @@ class RNNLM_Weight(object):
         print "Finished Initializing Weights"
         self.check_weights()
         
-    def init_zero_weights(self, architecture, verbose=False):
+    def init_zero_weights(self, architecture, verbose=False, maxent=False, nonlinearity = None):
+        if nonlinearity is not None:
+            if nonlinearity not in ['sigmoid', 'relu', 'tanh']:
+                error_string = "nonlinearity %s is not acceptable. It can be either sigmoid, relu, tanh" % nonlinearity
+                raise ValueError(error_string)
+            else:
+                self.nonlinearity = nonlinearity
         self.init_hiddens = np.zeros((1,architecture[1]))
         self.bias['visible'] = np.zeros((1,architecture[0]))
         self.bias['hidden'] = np.zeros((1,architecture[1]))
@@ -247,6 +274,10 @@ class RNNLM_Weight(object):
         self.weights['visible_hidden'] = np.zeros( (architecture[0],architecture[1]) )
         self.weights['hidden_hidden'] = np.zeros( (architecture[1],architecture[1]) )
         self.weights['hidden_output'] = np.zeros( (architecture[1],architecture[2]) )
+        if maxent:
+            self.weights['visible_output'] = np.zeros((architecture[0],architecture[2]))
+            if 'visible_output' not in self.weights_keys:
+                self.weights_keys += ['visible_output']
         
         self.weight_type['visible_hidden'] = 'rbm_gaussian_bernoulli'
         self.weight_type['hidden_hidden'] = 'rbm_bernoulli_bernoulli'
@@ -338,7 +369,10 @@ class RNNLM_Weight(object):
         weight_dict['weights_visible_hidden'] = self.weights['visible_hidden']
         weight_dict['weights_hidden_hidden'] = self.weights['hidden_hidden']
         weight_dict['weights_hidden_output'] = self.weights['hidden_output']
+        if 'visible_output' in self.weights:
+            weight_dict['weights_visible_output'] = self.weights['visible_output']
         weight_dict['init_hiddens'] = self.init_hiddens
+        weight_dict['nonlinearity'] = self.nonlinearity
         try:
             sp.savemat(output_name, weight_dict, oned_as='column')
         except IOError:

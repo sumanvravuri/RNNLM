@@ -45,7 +45,8 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
                                'krylov_use_hessian_preconditioner', 'krylov_eigenvalue_floor_const', 
                                'fisher_preconditioner_floor_val', 'use_fisher_preconditioner',
                                'structural_damping_const', 
-                               'validation_feature_file_name', 'validation_label_file_name']
+                               'validation_feature_file_name', 'validation_label_file_name',
+                               'use_maxent', 'seed']
         self.required_variables['test'] =  ['mode', 'feature_file_name', 'weight_matrix_name', 'output_name']
         self.all_variables['test'] =  self.required_variables['test'] + ['label_file_name']
     
@@ -238,8 +239,14 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
 
     def forward_layer(self, inputs, weights, biases, weight_type, prev_hiddens = None, hidden_hidden_weights = None): #completed
         if weight_type == 'logistic':
-            return self.softmax(self.weight_matrix_multiply(inputs, weights, biases))
+            if hidden_hidden_weights is None:
+                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases))
+            else:
+                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases) + hidden_hidden_weights[(inputs),:])
         elif weight_type == 'rbm_gaussian_bernoulli' or weight_type == 'rbm_bernoulli_bernoulli':
+#            layer = weights[(inputs),:] + self.weight_matrix_multiply(prev_hiddens, hidden_hidden_weights, biases)
+#            np.clip(layer, a_min = 0.0, out = layer)
+#            return layer
             return self.sigmoid(weights[(inputs),:] + self.weight_matrix_multiply(prev_hiddens, hidden_hidden_weights, biases))
         #added to test finite differences calculation for pearlmutter forward pass
         elif weight_type == 'linear': #only used for the logistic layer
@@ -290,13 +297,19 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
         num_observations = inputs.size
         hiddens = model.weights['visible_hidden'][(inputs),:]
         hiddens[:1,:] += self.weight_matrix_multiply(model.init_hiddens, model.weights['hidden_hidden'], model.bias['hidden'])
+#        np.clip(hiddens[0, :], a_min = 0.0, out = hiddens[0, :])
         expit(hiddens[0,:], hiddens[0,:])
         
         for time_step in range(1, num_observations):
             hiddens[time_step:time_step+1,:] += self.weight_matrix_multiply(hiddens[time_step-1:time_step,:], model.weights['hidden_hidden'], model.bias['hidden'])
+#            np.clip(hiddens[time_step, :], a_min = 0.0, out = hiddens[time_step, :])
             expit(hiddens[time_step,:], hiddens[time_step,:]) #sigmoid
         
-        outputs = self.forward_layer(hiddens, model.weights['hidden_output'], model.bias['output'], model.weight_type['hidden_output'])
+        if 'visible_output' in model.weights:
+            outputs = self.forward_layer(hiddens, model.weights['hidden_output'], model.bias['output'], model.weight_type['hidden_output'],
+                                         model.weights['visible_output'])
+        else:
+            outputs = self.forward_layer(hiddens, model.weights['hidden_output'], model.bias['output'], model.weight_type['hidden_output'])
         
         if return_hiddens:
             return outputs, hiddens
@@ -321,22 +334,39 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
                                             model.weight_type['visible_hidden'], model.init_hiddens, 
                                             model.weights['hidden_hidden'])
         if linear_output:
-            outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
-                                                'linear')
+            if 'visible_output' in model.weights:
+                outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                    'linear', model.weights['visible_output'])
+            else:
+                outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                    'linear')
         else:
-            outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
-                                                model.weight_type['hidden_output'])
+            if 'visible_output' in model.weights:
+                outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                    model.weight_type['hidden_output'], model.weights['visible_output'])
+            else:
+                outputs[0,:,:] = self.forward_layer(hiddens[0,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                    model.weight_type['hidden_output'])
         for sequence_index in range(1, max_sequence_observations):
             sequence_input = inputs[sequence_index,:]
             hiddens[sequence_index,:,:] = self.forward_layer(sequence_input, model.weights['visible_hidden'], model.bias['hidden'], 
                                                              model.weight_type['visible_hidden'], hiddens[sequence_index-1,:,:], 
                                                              model.weights['hidden_hidden'])
             if linear_output:
-                outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
-                                                             'linear')
+                if 'visible_output' in model.weights:
+                    outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                                     'linear', model.weights['visible_output'])
+                else:
+                    outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                                     'linear')
             else:
-                outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
-                                                                 model.weight_type['hidden_output'])
+                if 'visible_output' in model.weights:
+                    outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                                     model.weight_type['hidden_output'], model.weights['visible_output'])
+                else:
+                    outputs[sequence_index,:,:] = self.forward_layer(hiddens[sequence_index,:,:], model.weights['hidden_output'], model.bias['output'], 
+                                                                     model.weight_type['hidden_output'])
+                    
             #find the observations where the sequence has ended, 
             #and then zero out hiddens and outputs, so nothing horrible happens during backprop, etc.
             zero_input = np.where(feature_sequence_lens <= sequence_index)
@@ -405,7 +435,10 @@ class RNNLM_Tester(Recurrent_Neural_Network_Language_Model): #completed
         self.dump_config_vals()
         self.classify()
         self.write_posterior_prob_file()
+#        self.classify_log_perplexity()
+#        self.write_log_perplexity_file()
 
+    
     def classify(self): #completed
         self.posterior_probs = self.forward_pass(self.features, self.feature_sequence_lens)
         self.flat_posterior_probs = self.flatten_output(self.posterior_probs)
@@ -415,7 +448,42 @@ class RNNLM_Tester(Recurrent_Neural_Network_Language_Model): #completed
             print "Classification accuracy is %f%%" % self.calculate_classification_accuracy(self.flat_posterior_probs, self.labels) * 100
         except AttributeError:
             print "no labels given, so skipping classification statistics"
-                
+    
+    def classify_log_perplexity(self):
+        start_frame = 0
+        self.log_perplexity = np.empty((len(self.feature_sequence_lens),))
+        for batch_index, feature_sequence_len in enumerate(self.feature_sequence_lens):
+            end_frame = start_frame + feature_sequence_len
+            batch_features = self.features[:feature_sequence_len, batch_index]
+            batch_labels = self.labels[start_frame:end_frame,:]
+            self.log_perplexity[batch_index] = -self.calculate_cross_entropy(self.forward_pass_single_batch(batch_features), batch_labels) / batch_labels.size
+            start_frame = end_frame
+    
+    def classify_log_perplexity_discount_factor(self, discount_factor = 1.0, unknown_word_index = None):
+        if unknown_word_index is None:
+            print "WARNING: not unknown_word_index index included... will give bad results if features have no unknown words"
+            unknown_word_index = np.max(self.features)
+        start_frame = 0
+        self.log_perplexity = np.empty((len(self.feature_sequence_lens),))
+        for batch_index, feature_sequence_len in enumerate(self.feature_sequence_lens):
+            end_frame = start_frame + feature_sequence_len
+            batch_features = self.features[:feature_sequence_len, batch_index]
+            batch_labels = self.labels[start_frame:end_frame,:]
+            outputs = self.forward_pass_single_batch(batch_features)
+            self.log_perplexity[batch_index] = -self.calculate_cross_entropy(outputs, batch_labels) / batch_labels.size
+            num_unknown_words = np.where(batch_labels == unknown_word_index)[0].size
+            if num_unknown_words > 0:
+                self.log_perplexity[batch_index] -= np.log(discount_factor) / batch_labels.size *  num_unknown_words
+            start_frame = end_frame
+    
+    def write_log_perplexity_file(self):
+        try:
+            print "Writing to", self.output_name
+            sp.savemat(self.output_name,{'targets' : self.log_perplexity}, oned_as='column') #output name should have .mat extension
+        except IOError:
+            print "Unable to write to ", self.output_name, "... Exiting now"
+            sys.exit()
+            
     def write_posterior_prob_file(self): #completed
         try:
             print "Writing to", self.output_name
@@ -482,7 +550,10 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             self.validation_labels = self.read_label_file(self.validation_label_file_name)
         #initialize weights
         self.weight_matrix_name = self.default_variable_define(config_dictionary, 'weight_matrix_name', exit_if_no_default=False)
-
+        self.use_maxent = self.default_variable_define(config_dictionary, 'use_maxent', arg_type='boolean', default_value=False)
+        
+        self.nonlinearity = self.default_variable_define(config_dictionary, 'nonlinearity', arg_type='string', default_value='sigmoid',
+                                                         acceptable_values = ['sigmoid', 'relu', 'tanh'])
         if self.weight_matrix_name != None:
             print "Since weight_matrix_name is defined, ignoring possible value of hiddens_structure"
             self.model.open_weights(self.weight_matrix_name)
@@ -493,13 +564,17 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             architecture = [np.max(self.features)+1, self.num_hiddens] #+1 because index starts at 0
             if hasattr(self, 'labels'):
                 architecture.append(np.max(self.labels[:,1])+1) #will have to change later if I have soft weights
-                
+            
+            self.seed = self.default_variable_define(config_dictionary, 'seed', 'int', '0')
             self.initial_weight_max = self.default_variable_define(config_dictionary, 'initial_weight_max', arg_type='float', default_value=0.1)
             self.initial_weight_min = self.default_variable_define(config_dictionary, 'initial_weight_min', arg_type='float', default_value=-0.1)
             self.initial_bias_max = self.default_variable_define(config_dictionary, 'initial_bias_max', arg_type='float', default_value=0.1)
             self.initial_bias_min = self.default_variable_define(config_dictionary, 'initial_bias_max', arg_type='float', default_value=-0.1)
-            self.model.init_random_weights(architecture, self.initial_bias_max, self.initial_bias_min, 
-                                           self.initial_weight_min, self.initial_weight_max)
+            self.use_maxent = self.default_variable_define(config_dictionary, 'use_maxent', arg_type='boolean', default_value=False)
+            self.model.init_random_weights(architecture, 
+#                                           self.initial_bias_max, self.initial_bias_min, 
+#                                           self.initial_weight_min, self.initial_weight_max, 
+                                           maxent=self.use_maxent, seed = self.seed)
             del architecture #we have it in the model
         #
         
@@ -572,7 +647,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         self.dump_config_vals()
     
     def calculate_gradient_single_batch(self, batch_inputs, batch_labels, gradient_weights, hiddens = None, outputs = None, check_gradient=False, 
-                                        model=None, l2_regularization_const = 0.0, return_cross_entropy = False): 
+                                        model=None, l2_regularization_const = 0.0, dropout = 0.0, return_cross_entropy = False): 
         #need to check regularization
         #TO DO: fix gradient when there is only a single word (empty?)
         #calculate gradient with particular Neural Network model. If None is specified, will use current weights (i.e., self.model)
@@ -585,6 +660,11 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         batch_indices = np.arange(batch_size)
         gradient_weights *= 0.0
         backward_inputs = outputs
+        if dropout < 0.0 or dropout > 1.0:
+            print "dropout must be between 0 and 1 but is", dropout
+            raise ValueError
+        if dropout != 0.0:
+            hiddens *= (np.random.rand(hiddens.shape[0], hiddens.shape[1]) > dropout)
 #        print batch_inputs
 #        print batch_labels
 #        print batch_indices
@@ -598,8 +678,11 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #        gradient_weights.bias['output'][0] = np.sum(backward_inputs, axis=0)
         np.sum(backward_inputs, axis=0, out = gradient_weights.bias['output'][0])
         np.dot(hiddens.T, backward_inputs, out = gradient_weights.weights['hidden_output'])
+        if 'visible_output' in model.weights:
+            gradient_weights.weights['visible_output'][batch_inputs] += backward_inputs
 #        backward_inputs = outputs - batch_unflattened_labels
-        pre_nonlinearity_hiddens = np.dot(backward_inputs[batch_size-1,:], model.weights['hidden_output'].T) 
+        pre_nonlinearity_hiddens = np.dot(backward_inputs[batch_size-1,:], model.weights['hidden_output'].T)
+#        pre_nonlinearity_hiddens *= hiddens[batch_size-1,:] > 0.0
         pre_nonlinearity_hiddens *= hiddens[batch_size-1,:] 
         pre_nonlinearity_hiddens *= 1 - hiddens[batch_size-1,:]
 #        if structural_damping_const > 0.0:
@@ -612,6 +695,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         for observation_index in range(batch_size-2,0,-1):
             pre_nonlinearity_hiddens = ((np.dot(backward_inputs[observation_index,:], model.weights['hidden_output'].T) + 
                                          np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T))
+#                                        * (hiddens[observation_index] > 0.0))
                                         * hiddens[observation_index,:] * (1 - hiddens[observation_index,:]))
 #            np.dot(backward_inputs[observation_index,:], model.weights['hidden_output'].T, out = pre_nonlinearity_hiddens)
 #            pre_nonlinearity_hiddens += np.dot(pre_nonlinearity_hiddens, model.weights['hidden_hidden'].T)
@@ -918,10 +1002,11 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         num_sequences = features.shape[1]
         num_examples = self.batch_size(feature_sequence_lens)
 #        print features.shape
+        print "Calculating Classification Statistics"
         while end_index < num_sequences: #run through the batches
             per_done = float(batch_index)/num_sequences*100
-            sys.stdout.write("\r                                                                \r") #clear line
-            sys.stdout.write("\rCalculating Classification Statistics: %.1f%% done " % per_done), sys.stdout.flush()
+#            sys.stdout.write("\r                                                                \r") #clear line
+#            sys.stdout.write("\rCalculating Classification Statistics: %.1f%% done " % per_done), sys.stdout.flush()
             end_index = min(batch_index+classification_batch_size, num_sequences)
             max_seq_len = max(feature_sequence_lens[batch_index:end_index])
 #            print batch_index, max_seq_len
@@ -937,7 +1022,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             num_correct += np.sum(prediction == label[:,1]) #- (prediction.size - num_examples) #because of the way we handle features, where some observations are null, we want to remove those examples for calculating accuracy
             batch_index += classification_batch_size
         
-        sys.stdout.write("\r                                                                \r") #clear line
+#        sys.stdout.write("\r                                                                \r") #clear line
         loss = cross_entropy
         if self.l2_regularization_const > 0.0:
             loss += (model.norm(excluded_keys) ** 2) * self.l2_regularization_const
@@ -1106,9 +1191,11 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         start_time = datetime.datetime.now()
         print "Training started at", start_time
         prev_step = RNNLM_Weight()
-        prev_step.init_zero_weights(self.model.get_architecture())
+        prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
         gradient = RNNLM_Weight()
-        gradient.init_zero_weights(self.model.get_architecture())
+        gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
+        self.dropout = 0.0
+        
         if self.validation_feature_file_name is not None:
             cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
             print "cross-entropy before steepest descent is", cross_entropy
@@ -1131,6 +1218,10 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 print "momentum is", momentum_rate
             else:
                 momentum_rate = 0.0
+            if self.dropout != 0.0:
+                print "dropout rate is", self.dropout
+                self.model.weights['hidden_output'] /= (1 - self.dropout)
+                self.model.weights['hidden_hidden'] /= (1 - self.dropout)
             for batch_index, feature_sequence_len in enumerate(self.feature_sequence_lens):
                 end_frame = start_frame + feature_sequence_len
                 batch_features = self.features[:feature_sequence_len, batch_index]
@@ -1140,15 +1231,15 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #                print batch_features
 #                print batch_labels
                 cur_xent = self.calculate_gradient_single_batch(batch_features, batch_labels, gradient, return_cross_entropy = True, 
-                                                                check_gradient = False)
+                                                                check_gradient = False, dropout = self.dropout)
 #                print self.model.norm()
 #                print gradient.norm()
                 cross_entropy += cur_xent 
-                per_done = float(batch_index)/self.num_sequences*100
-                sys.stdout.write("\r                                                                \r") #clear line
-                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
-                ppp = cross_entropy / end_frame
-                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
+#                per_done = float(batch_index)/self.num_sequences*100
+#                sys.stdout.write("\r                                                                \r") #clear line
+#                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
+#                ppp = cross_entropy / end_frame
+#                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
                 gradient *= -self.steepest_learning_rate[epoch_num]
                 if self.l2_regularization_const > 0.0:
                     self.model *= (1-self.l2_regularization_const) #l2 regularization_const
@@ -1161,6 +1252,9 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 
                 start_frame = end_frame
             print "Training for epoch finished at", datetime.datetime.now()
+            if self.dropout != 0.0:
+                self.model.weights['hidden_output'] *= (1 - self.dropout)
+                self.model.weights['hidden_hidden'] *= (1 - self.dropout)
             if self.validation_feature_file_name is not None:
                 cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
                 print "cross-entropy at the end of the epoch is", cross_entropy
@@ -1169,8 +1263,8 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                     print "regularized loss is", loss
                 print "number correctly classified is", num_correct, "of", num_examples
                 
-            sys.stdout.write("\r100.0% done \r")
-            sys.stdout.write("\r                                                                \r") #clear line
+#            sys.stdout.write("\r100.0% done \r")
+#            sys.stdout.write("\r                                                                \r") #clear line
             if self.save_each_epoch:
                 self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))           
             print "Epoch finished at", datetime.datetime.now()
@@ -1333,7 +1427,9 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             sys.stdout.write("\r100.0% done \r")
             sys.stdout.write("\r                                                                \r") #clear line
             if self.save_each_epoch:
-                self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))  
+                self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+        
+        self.model.write_weights(self.output_name)
 
     def backprop_adagrad(self):
         print "Starting backprop using adagrad"
@@ -1885,4 +1981,94 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             unflattened_labels[observation_index, sentence_id, label] = 1.0
             observation_index += 1
         return unflattened_labels
+    
+    def backprop_steepest_descent_single_batch_semi_newbob(self):
+        print "Starting backprop using steepest descent newbob"
+        start_time = datetime.datetime.now()
+        print "Training started at", start_time
+        prev_step = RNNLM_Weight()
+        prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent, nonlinearity = self.nonlinearity)
+        gradient = RNNLM_Weight()
+        gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent, nonlinearity = self.nonlinearity)
+        
+        if self.validation_feature_file_name is not None:
+            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+            print "cross-entropy before steepest descent is", cross_entropy
+            print "perplexity is", perplexity
+            if self.l2_regularization_const > 0.0:
+                print "regularized loss is", loss
+            print "number correctly classified is", num_correct, "of", num_examples
+        learning_rate = self.steepest_learning_rate[0]
+        if hasattr(self, 'momentum_rate'):
+            momentum_rate = self.momentum_rate[0]
+            print "momentum is", momentum_rate
+        else:
+            momentum_rate = 0.0
+        num_decreases = 0
+        prev_cross_entropy = cross_entropy
+        prev_num_correct = num_correct
+        for epoch_num in range(100):
+            print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
+            print "Training for epoch started at", datetime.datetime.now()
+            start_frame = 0
+            end_frame = 0
+            cross_entropy = 0.0
+            num_examples = 0
+            
+            for batch_index, feature_sequence_len in enumerate(self.feature_sequence_lens):
+                end_frame = start_frame + feature_sequence_len
+                batch_features = self.features[:feature_sequence_len, batch_index]
+                batch_labels = self.labels[start_frame:end_frame,1]
+                cur_xent = self.calculate_gradient_single_batch(batch_features, batch_labels, gradient, return_cross_entropy = True, 
+                                                                check_gradient = False)
+                cross_entropy += cur_xent 
+#                per_done = float(batch_index)/self.num_sequences*100
+#                sys.stdout.write("\r                                                                \r") #clear line
+#                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
+#                ppp = cross_entropy / end_frame
+#                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
+                gradient *= -learning_rate
+                if self.l2_regularization_const > 0.0:
+                    self.model *= (1-self.l2_regularization_const) #l2 regularization_const
+                self.model += gradient #/ batch_size
+                if momentum_rate > 0.0:
+                    prev_step *= momentum_rate
+                    self.model += prev_step
+                prev_step.assign_weights(gradient)
+#                prev_step *= -self.steepest_learning_rate[epoch_num]
+                
+                start_frame = end_frame
+            print "Training for epoch finished at", datetime.datetime.now()
+            if self.validation_feature_file_name is not None:
+                cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+                print "cross-entropy at the end of the epoch is", cross_entropy
+                print "perplexity is", perplexity
+                if self.l2_regularization_const > 0.0:
+                    print "regularized loss is", loss
+                print "number correctly classified is", num_correct, "of", num_examples
+            else:
+                raise ValueError("validation feature file must exist")
+            if prev_num_correct < num_correct:
+                prev_cross_entropy = cross_entropy
+                prev_num_correct = num_correct
+                self.model.write_weights(''.join([self.output_name, '_best_weights']))
+                if self.save_each_epoch:
+                    self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+                print "num_decreases so far is", num_decreases
+                if num_decreases == 2: 
+                    learning_rate /= 2.0
+                    momentum_rate /= 2.0
+            else:
+                num_decreases += 1
+                print "cross-entropy did not decrease, so using previous best weights"
+                self.model.open_weights(''.join([self.output_name, '_best_weights']))
+                if num_decreases > 2: break
+                learning_rate /= 2.0
+                momentum_rate /= 2.0
+#            sys.stdout.write("\r100.0% done \r")
+#            sys.stdout.write("\r                                                                \r") #clear line           
+            print "Epoch finished at", datetime.datetime.now()
+        self.model.write_weights(self.output_name)
+        end_time = datetime.datetime.now()
+        print "Training finished at", end_time, "and ran for", end_time - start_time
     
