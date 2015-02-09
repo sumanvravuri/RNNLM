@@ -684,7 +684,7 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
             num_correct += np.sum(prediction == label[:,1]) #- (prediction.size - num_examples) #because of the way we handle features, where some observations are null, we want to remove those examples for calculating accuracy
             batch_index += classification_batch_size
         
-        sys.stdout.write("\r                                                                \r") #clear line
+#        sys.stdout.write("\r                                                                \r") #clear line
         loss = cross_entropy
         if self.l2_regularization_const > 0.0:
             loss += (model.norm(excluded_keys) ** 2) * self.l2_regularization_const
