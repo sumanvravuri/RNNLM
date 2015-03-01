@@ -2007,7 +2007,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         num_decreases = 0
         prev_cross_entropy = cross_entropy
         prev_num_correct = num_correct
-        for epoch_num in range(100):
+        for epoch_num in range(1000):
             print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
             print "Training for epoch started at", datetime.datetime.now()
             start_frame = 0

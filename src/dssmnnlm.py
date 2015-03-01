@@ -793,7 +793,7 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
         prev_num_correct = num_correct
         is_init = True
         self.model.write_weights(''.join([self.output_name, '_best_weights']))
-        for epoch_num in range(100):
+        for epoch_num in range(1000):
             print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
             print "Training for epoch started at", datetime.datetime.now()
             start_frame = 0
