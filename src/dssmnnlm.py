@@ -486,6 +486,9 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
 #                                           self.initial_weight_min, self.initial_weight_max, 
                                            maxent=self.use_maxent,
                                            nonlinearity = self.nonlinearity, seed = self.seed)
+            one_prob = float(self.labels[:,1].sum()) / self.labels.shape[0]
+            self.model.bias['output'][0,0] = np.log(1.0 - one_prob)
+            self.model.bias['output'][0,1] = np.log(one_prob)
             del architecture #we have it in the model
         #
         
@@ -778,7 +781,7 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
             print "perplexity is", perplexity
             if self.l2_regularization_const > 0.0:
                 print "regularized loss is", loss
-            print "number correctly classified is", num_correct, "of", num_examples
+            print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
         learning_rate = self.steepest_learning_rate[0]
         if hasattr(self, 'momentum_rate'):
             momentum_rate = self.momentum_rate[0]
@@ -788,6 +791,8 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
         num_decreases = 0
         prev_cross_entropy = cross_entropy
         prev_num_correct = num_correct
+        is_init = True
+        self.model.write_weights(''.join([self.output_name, '_best_weights']))
         for epoch_num in range(100):
             print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
             print "Training for epoch started at", datetime.datetime.now()
@@ -826,10 +831,12 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
                 print "perplexity is", perplexity
                 if self.l2_regularization_const > 0.0:
                     print "regularized loss is", loss
-                print "number correctly classified is", num_correct, "of", num_examples
+                print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
             else:
                 raise ValueError("validation feature file must exist")
-            if prev_num_correct < num_correct:
+#            print prev_cross_entropy, cross_entropy
+            if cross_entropy < prev_cross_entropy:
+                is_init = False
                 prev_cross_entropy = cross_entropy
                 prev_num_correct = num_correct
                 self.model.write_weights(''.join([self.output_name, '_best_weights']))
@@ -840,7 +847,7 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
                     learning_rate /= 2.0
                     momentum_rate /= 2.0
             else:
-                num_decreases += 1
+                if not is_init: num_decreases += 1 #don't count num_decreases when trying to find initial learning rate
                 print "cross-entropy did not decrease, so using previous best weights"
                 self.model.open_weights(''.join([self.output_name, '_best_weights']))
                 if num_decreases > 2: break
@@ -852,3 +859,72 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
         self.model.write_weights(self.output_name)
         end_time = datetime.datetime.now()
         print "Training finished at", end_time, "and ran for", end_time - start_time
+
+
+def init_arg_parser():
+    required_variables = dict()
+    all_variables = dict()
+    required_variables['train'] = ['feature_file_name', 'output_name']
+    all_variables['train'] = required_variables['train'] + ['label_file_name', 'num_hiddens', 'weight_matrix_name', 
+                                                            'save_each_epoch',
+                                                            'l2_regularization_const',
+                                                            'steepest_learning_rate', 'momentum_rate',
+                                                            'validation_feature_file_name', 'validation_label_file_name',
+                                                            'use_maxent', 'nonlinearity',
+                                                            'seed']
+    required_variables['test'] =  ['feature_file_name', 'weight_matrix_name', 'output_name']
+    all_variables['test'] =  required_variables['test'] + ['label_file_name']
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', help='mode for DNN, either train or test', required=False)
+    parser.add_argument('--config_file', help='configuration file to read in you do not want to input arguments via command line', required=False)
+    for argument in all_variables['train']:
+        parser.add_argument('--' + argument, required=False)
+    for argument in all_variables['test']:
+        if argument not in all_variables['train']:
+            parser.add_argument('--' + argument, required=False)
+    return parser
+
+if __name__ == '__main__':
+    #script_name, config_filename = sys.argv
+    #print "Opening config file: %s" % config_filename
+    script_name = sys.argv[0]
+    parser = init_arg_parser()
+    config_dictionary = vars(parser.parse_args())
+    
+    if config_dictionary['config_file'] != None :
+        config_filename = config_dictionary['config_file']
+        print "Since", config_filename, "is specified, ignoring other arguments"
+        try:
+            config_file=open(config_filename)
+        except IOError:
+            print "Could open file", config_filename, ". Usage is ", script_name, "<config file>... Exiting Now"
+            sys.exit()
+        
+        del config_dictionary
+        
+        #read lines into a configuration dictionary, skipping lines that begin with #
+        config_dictionary = dict([line.replace(" ", "").strip(' \n\t').split('=') for line in config_file 
+                                  if not line.replace(" ", "").strip(' \n\t').startswith('#') and '=' in line])
+        config_file.close()
+    else:
+        #remove empty keys
+        config_dictionary = dict([(arg,value) for arg,value in config_dictionary.items() if value != None])
+
+    try:
+        mode=config_dictionary['mode']
+    except KeyError:
+        print 'No mode found, must be train or test... Exiting now'
+        sys.exit()
+    else:
+        if (mode != 'train') and (mode != 'test'):
+            print "Mode", mode, "not understood. Should be either train or test... Exiting now"
+            sys.exit()
+    
+    if mode == 'test':
+        test_object = DSSMNNLM_Tester(config_dictionary)
+    else: #mode ='train'
+        train_object = DSSMNNLM_Trainer(config_dictionary)
+        train_object.train()
+        
+    print "Finished without Runtime Error!" 
