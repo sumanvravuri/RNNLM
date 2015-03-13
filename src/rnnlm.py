@@ -2071,4 +2071,72 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         self.model.write_weights(self.output_name)
         end_time = datetime.datetime.now()
         print "Training finished at", end_time, "and ran for", end_time - start_time
+
+
+def init_arg_parser():
+    required_variables = dict()
+    all_variables = dict()
+    required_variables['train'] = ['feature_file_name', 'output_name']
+    all_variables['train'] = required_variables['train'] + ['label_file_name', 'num_hiddens', 'weight_matrix_name', 
+                                                            'save_each_epoch',
+                                                            'l2_regularization_const',
+                                                            'steepest_learning_rate', 'momentum_rate',
+                                                            'validation_feature_file_name', 'validation_label_file_name',
+                                                            'use_maxent', 'nonlinearity',
+                                                            'seed']
+    required_variables['test'] =  ['feature_file_name', 'weight_matrix_name', 'output_name']
+    all_variables['test'] =  required_variables['test'] + ['label_file_name']
     
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', help='mode for DNN, either train or test', required=False)
+    parser.add_argument('--config_file', help='configuration file to read in you do not want to input arguments via command line', required=False)
+    for argument in all_variables['train']:
+        parser.add_argument('--' + argument, required=False)
+    for argument in all_variables['test']:
+        if argument not in all_variables['train']:
+            parser.add_argument('--' + argument, required=False)
+    return parser
+
+if __name__ == '__main__':
+    #script_name, config_filename = sys.argv
+    #print "Opening config file: %s" % config_filename
+    script_name = sys.argv[0]
+    parser = init_arg_parser()
+    config_dictionary = vars(parser.parse_args())
+    
+    if config_dictionary['config_file'] != None :
+        config_filename = config_dictionary['config_file']
+        print "Since", config_filename, "is specified, ignoring other arguments"
+        try:
+            config_file=open(config_filename)
+        except IOError:
+            print "Could open file", config_filename, ". Usage is ", script_name, "<config file>... Exiting Now"
+            sys.exit()
+        
+        del config_dictionary
+        
+        #read lines into a configuration dictionary, skipping lines that begin with #
+        config_dictionary = dict([line.replace(" ", "").strip(' \n\t').split('=') for line in config_file 
+                                  if not line.replace(" ", "").strip(' \n\t').startswith('#') and '=' in line])
+        config_file.close()
+    else:
+        #remove empty keys
+        config_dictionary = dict([(arg,value) for arg,value in config_dictionary.items() if value != None])
+
+    try:
+        mode=config_dictionary['mode']
+    except KeyError:
+        print 'No mode found, must be train or test... Exiting now'
+        sys.exit()
+    else:
+        if (mode != 'train') and (mode != 'test'):
+            print "Mode", mode, "not understood. Should be either train or test... Exiting now"
+            sys.exit()
+    
+    if mode == 'test':
+        test_object = RNNLM_Tester(config_dictionary)
+    else: #mode ='train'
+        train_object = RNNLM_Trainer(config_dictionary)
+        train_object.train()
+        
+    print "Finished without Runtime Error!" 
