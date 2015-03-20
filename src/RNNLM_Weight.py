@@ -242,8 +242,8 @@ class RNNLM_Weight(object):
 #        self.weights['hidden_output']=(initial_weight_min + initial_weight_range * 
 #                                       np.random.random_sample( (architecture[1],architecture[2]) ))
         
-        self.weights['visible_hidden'] = 0.2 * np.random.randn( architecture[0],architecture[1]) 
-        self.weights['hidden_hidden'] = 0.2 * np.random.randn( architecture[1],architecture[1]) 
+        self.weights['visible_hidden'] = 0.2 * np.random.randn( architecture[0],architecture[1])
+        self.weights['hidden_hidden'] = np.linalg.svd(0.2 * np.random.randn( architecture[1],architecture[1]) )[0]
         self.weights['hidden_output'] = 0.2 * np.random.randn( architecture[1],architecture[2])
         if maxent:
             self.weights['visible_output'] = 0.2 * np.random.randn( architecture[0],architecture[2])
