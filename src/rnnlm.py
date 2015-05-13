@@ -575,6 +575,9 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
 #                                           self.initial_bias_max, self.initial_bias_min, 
 #                                           self.initial_weight_min, self.initial_weight_max, 
                                            maxent=self.use_maxent, seed = self.seed)
+#            one_prob = float(self.labels[:,1].sum()) / self.labels.shape[0]
+#            self.model.bias['output'][0,0] = np.log(1.0 - one_prob)
+#            self.model.bias['output'][0,1] = np.log(one_prob)
             del architecture #we have it in the model
         #
         
@@ -1997,7 +2000,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             print "perplexity is", perplexity
             if self.l2_regularization_const > 0.0:
                 print "regularized loss is", loss
-            print "number correctly classified is", num_correct, "of", num_examples
+            print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
         learning_rate = self.steepest_learning_rate[0]
         if hasattr(self, 'momentum_rate'):
             momentum_rate = self.momentum_rate[0]
@@ -2045,7 +2048,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 print "perplexity is", perplexity
                 if self.l2_regularization_const > 0.0:
                     print "regularized loss is", loss
-                print "number correctly classified is", num_correct, "of", num_examples
+                print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
             else:
                 raise ValueError("validation feature file must exist")
             if prev_num_correct < num_correct:
@@ -2072,7 +2075,113 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         end_time = datetime.datetime.now()
         print "Training finished at", end_time, "and ran for", end_time - start_time
 
-
+    def backprop_steepest_descent_semi_newbob(self):
+        print "Starting backprop using steepest descent newbob"
+        start_time = datetime.datetime.now()
+        print "Training started at", start_time
+        prev_step = RNNLM_Weight()
+        prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent, nonlinearity = self.nonlinearity)
+        gradient = RNNLM_Weight()
+        gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent, nonlinearity = self.nonlinearity)
+        
+        
+        self.model.write_weights(''.join([self.output_name, '_best_weights']))
+        
+        if self.validation_feature_file_name is not None:
+            cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+            print "cross-entropy before steepest descent is", cross_entropy
+            print "perplexity is", perplexity
+            if self.l2_regularization_const > 0.0:
+                print "regularized loss is", loss
+            print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
+        learning_rate = self.steepest_learning_rate[0]
+        if hasattr(self, 'momentum_rate'):
+            momentum_rate = self.momentum_rate[0]
+        else:
+            momentum_rate = 0.0
+        num_decreases = 0
+        prev_cross_entropy = cross_entropy
+        prev_num_correct = num_correct
+        is_init = True
+        init_decreases = 0
+        
+        for epoch_num in range(1000):
+            batch_index = 0
+            end_index = 0
+            cross_entropy = 0.0
+            num_examples = 0
+            print "The learning rate is", learning_rate, "and momentum is", momentum_rate
+            while end_index < self.num_sequences: #run through the batches
+                per_done = float(batch_index)/self.num_sequences*100
+                sys.stdout.write("\r                                                                \r") #clear line
+                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
+                if num_examples > 0:
+                    ppp = cross_entropy / num_examples
+                    sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
+                end_index = min(batch_index+self.backprop_batch_size,self.num_sequences)
+                max_seq_len = max(self.feature_sequence_lens[batch_index:end_index])
+                batch_inputs = self.features[:max_seq_len,batch_index:end_index]
+                start_frame = np.where(self.labels[:,0] == batch_index)[0][0]
+                end_frame = np.where(self.labels[:,0] == end_index-1)[0][-1] + 1
+                batch_labels = copy.deepcopy(self.labels[start_frame:end_frame,:])
+                batch_labels[:,0] -= batch_labels[0,0]
+                batch_fsl = self.feature_sequence_lens[batch_index:end_index]
+                batch_size = self.batch_size(self.feature_sequence_lens[batch_index:end_index])
+                num_examples += batch_size
+#                sys.stdout.write("\r                                                                \r") #clear line
+#                sys.stdout.write("\rcalculating gradient\r"), sys.stdout.flush()
+                gradient, cur_xent = self.calculate_gradient(batch_inputs, batch_labels, batch_fsl, model=self.model, check_gradient = False, return_cross_entropy = True)
+#                print np.max(np.abs(gradient.weights['hidden_output']))
+                cross_entropy += cur_xent
+                if self.l2_regularization_const > 0.0:
+                    self.model *= (1-self.l2_regularization_const) #l2 regularization_const
+                self.model -= gradient * learning_rate #/ batch_size
+                if momentum_rate > 0.0:
+                    self.model += prev_step * momentum_rate
+                prev_step.assign_weights(gradient)
+                prev_step *= -learning_rate #/ batch_size
+                del batch_labels
+                batch_index += self.backprop_batch_size
+            print ""
+            print "Training for epoch finished at", datetime.datetime.now()
+            if self.validation_feature_file_name is not None:
+                cross_entropy, perplexity, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
+                print "cross-entropy at the end of the epoch is", cross_entropy
+                print "perplexity is", perplexity
+                if self.l2_regularization_const > 0.0:
+                    print "regularized loss is", loss
+                print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
+            else:
+                raise ValueError("validation feature file must exist")
+            if 1.001 * cross_entropy < prev_cross_entropy:
+                is_init = False
+                prev_cross_entropy = cross_entropy
+                prev_num_correct = num_correct
+                self.model.write_weights(''.join([self.output_name, '_best_weights']))
+                if self.save_each_epoch:
+                    self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+                print "num_decreases so far is", num_decreases
+                if num_decreases == 2: 
+                    learning_rate /= 2.0
+                    momentum_rate /= 2.0
+            else:
+                if is_init: init_decreases += 1
+                if init_decreases == 15:
+                    print "Tried to find initial learning rate, but failed, quitting"
+                    break
+                if not is_init: num_decreases += 1 #don't count num_decreases when trying to find initial learning rate
+                print "cross-entropy did not decrease, so using previous best weights"
+                self.model.open_weights(''.join([self.output_name, '_best_weights']))
+                if num_decreases > 2: break
+                learning_rate /= 2.0
+                momentum_rate /= 2.0
+#            sys.stdout.write("\r100.0% done \r")
+#            sys.stdout.write("\r                                                                \r") #clear line           
+            print "Epoch finished at", datetime.datetime.now()
+        self.model.write_weights(self.output_name)
+        end_time = datetime.datetime.now()
+        print "Training finished at", end_time, "and ran for", end_time - start_time
+        
 def init_arg_parser():
     required_variables = dict()
     all_variables = dict()
@@ -2083,6 +2192,7 @@ def init_arg_parser():
                                                             'steepest_learning_rate', 'momentum_rate',
                                                             'validation_feature_file_name', 'validation_label_file_name',
                                                             'use_maxent', 'nonlinearity',
+                                                            'backprop_batch_size',
                                                             'seed']
     required_variables['test'] =  ['feature_file_name', 'weight_matrix_name', 'output_name']
     all_variables['test'] =  required_variables['test'] + ['label_file_name']
@@ -2137,6 +2247,6 @@ if __name__ == '__main__':
         test_object = RNNLM_Tester(config_dictionary)
     else: #mode ='train'
         train_object = RNNLM_Trainer(config_dictionary)
-        train_object.train()
+        train_object.backprop_steepest_descent_semi_newbob()
         
     print "Finished without Runtime Error!" 

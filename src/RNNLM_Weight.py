@@ -176,31 +176,31 @@ class RNNLM_Weight(object):
             print "Unable to open", weight_matrix_name, "exiting now"
             sys.exit()
         try:
-            self.bias['visible'] = weight_dict['bias_visible']
+            self.bias['visible'] = np.array(weight_dict['bias_visible'], order='C')
         except KeyError:
             print "bias_visible not found. bias_visible must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
             sys.exit()
         
         try:
-            self.bias['hidden'] = weight_dict['bias_hidden']
+            self.bias['hidden'] = np.array(weight_dict['bias_hidden'], order='C')
         except KeyError:
             print "bias_hidden not found. bias_hidden must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
             sys.exit()
         
         try:
-            self.bias['output'] = weight_dict['bias_output']
+            self.bias['output'] = np.array(weight_dict['bias_output'], order='C')
         except KeyError:
             print "bias_output not found. bias_output must exist for", weight_matrix_name, "to be a valid weight file... Exiting now"
             sys.exit()
         
         #TODO: dump these inside of try
-        self.init_hiddens = weight_dict['init_hiddens']
-        self.weights['visible_hidden'] = weight_dict['weights_visible_hidden']
-        self.weights['hidden_hidden'] = weight_dict['weights_hidden_hidden']
-        self.weights['hidden_output'] = weight_dict['weights_hidden_output']
+        self.init_hiddens = np.array(weight_dict['init_hiddens'], order='C')
+        self.weights['visible_hidden'] = np.array(weight_dict['weights_visible_hidden'], order='C')
+        self.weights['hidden_hidden'] = np.array(weight_dict['weights_hidden_hidden'], order='C')
+        self.weights['hidden_output'] = np.array(weight_dict['weights_hidden_output'], order='C')
         self.nonlinearity = weight_dict['nonlinearity'][0]
         if 'weights_visible_output' in weight_dict:
-            self.weights['visible_output'] = weight_dict['weights_visible_output']
+            self.weights['visible_output'] = np.array(weight_dict['weights_visible_output'], order='C')
             if 'visible_output' not in self.weights_keys:
                 self.weights_keys += ['visible_output']
         
@@ -215,7 +215,7 @@ class RNNLM_Weight(object):
 #                            initial_bias_max, initial_bias_min, initial_weight_max, initial_weight_min, 
                             seed=0, maxent=False,
                             nonlinearity = None): #completed, expensive, should be compiled
-        np.random.seed(seed)
+        np.random.seed(0)
         if nonlinearity is not None:
             if nonlinearity not in ['sigmoid', 'relu', 'tanh']:
                 error_string = "nonlinearity %s is not acceptable. It can be either sigmoid, relu, tanh" % nonlinearity
@@ -243,7 +243,7 @@ class RNNLM_Weight(object):
 #                                       np.random.random_sample( (architecture[1],architecture[2]) ))
         
         self.weights['visible_hidden'] = 0.2 * np.random.randn( architecture[0],architecture[1])
-        self.weights['hidden_hidden'] = np.linalg.svd(0.2 * np.random.randn( architecture[1],architecture[1]) )[0]
+        self.weights['hidden_hidden'] = 0.2 * np.random.randn( architecture[1],architecture[1])
         self.weights['hidden_output'] = 0.2 * np.random.randn( architecture[1],architecture[2])
         if maxent:
             self.weights['visible_output'] = 0.2 * np.random.randn( architecture[0],architecture[2])
