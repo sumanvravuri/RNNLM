@@ -38,7 +38,7 @@ class Recurrent_Neural_Network_Language_Model(object, Vector_Math):
                                'pretrain_learning_rate', 'pretrain_batch_size',
                                'do_backprop', 'backprop_method', 'backprop_batch_size', 'l2_regularization_const',
                                'num_epochs', 'num_line_searches', 'armijo_const', 'wolfe_const',
-                               'steepest_learning_rate', 'momentum_rate',
+                               'steepest_learning_rate', 'momentum_rate', 'max_num_decreases',
                                'conjugate_max_iterations', 'conjugate_const_type',
                                'truncated_newton_num_cg_epochs', 'truncated_newton_init_damping_factor',
                                'krylov_num_directions', 'krylov_num_batch_splits', 'krylov_num_bfgs_epochs', 'second_order_matrix',
@@ -617,10 +617,12 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
             self.l2_regularization_const = self.default_variable_define(config_dictionary, 'l2_regularization_const', arg_type='float', default_value=0.0, exit_if_no_default=False)
             
             if self.backprop_method == 'steepest_descent':
-                self.steepest_learning_rate = self.default_variable_define(config_dictionary, 'steepest_learning_rate', default_value=[0.08, 0.04, 0.02, 0.01], arg_type='float_comma_string')
-                self.momentum_rate = self.default_variable_define(config_dictionary, 'momentum_rate', arg_type='float_comma_string', exit_if_no_default=False)
+                self.steepest_learning_rate = self.default_variable_define(config_dictionary, 'steepest_learning_rate', default_value=0.08, arg_type='float_comma_string')
+                self.momentum_rate = self.default_variable_define(config_dictionary, 'momentum_rate', arg_type='float_comma_string', default_value = 0.0, exit_if_no_default=False)
+                self.max_num_decreases = self.default_variable_define(config_dictionary, 'max_num_decreases', default_value=2, arg_type='int')
                 if hasattr(self, 'momentum_rate'):
                     assert(len(self.momentum_rate) == len(self.steepest_learning_rate))
+                
             if self.backprop_method == 'adagrad':
                 self.steepest_learning_rate = self.default_variable_define(config_dictionary, 'steepest_learning_rate', default_value=[0.08, 0.04, 0.02, 0.01], arg_type='float_comma_string')
             else: #second order methods
@@ -993,9 +995,9 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
         excluded_keys = {'bias': ['0'], 'weights': []}
         
         if self.do_backprop == False:
-            classification_batch_size = 64
+            classification_batch_size = 1024
         else:
-            classification_batch_size = max(self.backprop_batch_size, 64)
+            classification_batch_size = max(self.backprop_batch_size, 1024)
         
         batch_index = 0
         end_index = 0
@@ -2153,15 +2155,16 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 print "number correctly classified is %d of %d (%.2f%%)" % (num_correct, num_examples, 100.0 * num_correct / num_examples)
             else:
                 raise ValueError("validation feature file must exist")
-            if 1.001 * cross_entropy < prev_cross_entropy:
+            if self.save_each_epoch:
+                self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+            if 1.01 * cross_entropy < prev_cross_entropy:
                 is_init = False
                 prev_cross_entropy = cross_entropy
                 prev_num_correct = num_correct
                 self.model.write_weights(''.join([self.output_name, '_best_weights']))
-                if self.save_each_epoch:
-                    self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+                
                 print "num_decreases so far is", num_decreases
-                if num_decreases == 2: 
+                if num_decreases == self.max_num_decreases: 
                     learning_rate /= 2.0
                     momentum_rate /= 2.0
             else:
@@ -2172,7 +2175,7 @@ class RNNLM_Trainer(Recurrent_Neural_Network_Language_Model):
                 if not is_init: num_decreases += 1 #don't count num_decreases when trying to find initial learning rate
                 print "cross-entropy did not decrease, so using previous best weights"
                 self.model.open_weights(''.join([self.output_name, '_best_weights']))
-                if num_decreases > 2: break
+                if num_decreases > self.max_num_decreases: break
                 learning_rate /= 2.0
                 momentum_rate /= 2.0
 #            sys.stdout.write("\r100.0% done \r")
@@ -2192,7 +2195,7 @@ def init_arg_parser():
                                                             'steepest_learning_rate', 'momentum_rate',
                                                             'validation_feature_file_name', 'validation_label_file_name',
                                                             'use_maxent', 'nonlinearity',
-                                                            'backprop_batch_size',
+                                                            'backprop_batch_size', 'max_num_decreases',
                                                             'seed']
     required_variables['test'] =  ['feature_file_name', 'weight_matrix_name', 'output_name']
     all_variables['test'] =  required_variables['test'] + ['label_file_name']
