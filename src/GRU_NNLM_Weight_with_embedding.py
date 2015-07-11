@@ -1,5 +1,5 @@
 '''
-Created on Aug 21, 2014
+Created on Jun 26, 2015
 
 @author: sumanravuri
 '''
@@ -8,20 +8,19 @@ import numpy as np
 import scipy.io as sp
 import copy
 
-class LSTM_NNLM_Weight_with_embedding(object):
+class GRU_NNLM_Weight_with_embedding(object):
     def __init__(self, weights=None, bias=None):
         """num_layers
-        weights - actual LSTM weights, a dictionary with keys corresponding to layer, ie. weights['visible_hidden'], weights['hidden_hidden'], and weights['hidden_output'] each numpy array
+        weights - actual GRU weights, a dictionary with keys corresponding to layer, ie. weights['visible_hidden'], weights['hidden_hidden'], and weights['hidden_output'] each numpy array
         bias - NN biases, again a dictionary stored as bias['visible'], bias['hidden'], bias['output'], etc.
         weight_type - optional command indexed by same keys weights, possible optionals are 'rbm_gaussian_bernoullli', 'rbm_bernoulli_bernoulli'"""
 #        self.valid_layer_types = dict()
 #        self.valid_layer_types['visible_hidden'] = ['rbm_gaussian_bernoulli', 'rbm_bernoulli_bernoulli']
 #        self.valid_layer_types['hidden_hidden'] = ['rbm_bernoulli_bernoulli']
 #        self.valid_layer_types['hidden_output'] = ['logistic']
-        self.bias_keys = ['inputgate', 'forgetgate', 'outputgate', 'cell', 'output', 'embedding']
-        self.weights_keys = ['visible_inputgate', 'visible_forgetgate', 'visible_outputgate', 'visible_cell',
-                             'hidden_inputgate', 'hidden_forgetgate', 'hidden_outputgate', 'hidden_cell',
-                             'prevcell_inputgate', 'prevcell_forgetgate', 'curcell_outputgate',
+        self.bias_keys = ['resetgate', 'updategate', 'activation', 'output', 'embedding']
+        self.weights_keys = ['visible_activation', 'visible_updategate', 'visible_resetgate', 
+                             'prevhidden_activation', 'prevhidden_updategate', 'prevhidden_resetgate',
                              'hidden_output', 'embedding']
         
 #        if init_hiddens != None:
@@ -47,8 +46,8 @@ class LSTM_NNLM_Weight_with_embedding(object):
         #TO DO: do init hiddens need to be removed
         
 #    def dot(self, nn_weight2, excluded_keys = {'bias': [], 'weights': []}):
-#        if type(nn_weight2) is not LSTM_NNLM_Weight_with_embedding:
-#            print "argument must be of type LSTM_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
+#        if type(nn_weight2) is not GRU_NNLM_Weight_with_embedding:
+#            print "argument must be of type GRU_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
 #            sys.exit()
 #        return_val = 0
 #        for key in self.bias_keys:
@@ -145,7 +144,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         return nn_output
     
     def get_architecture(self):
-        return [self.weights['embedding'].shape[0], self.bias['embedding'].size, self.bias['cell'].size, self.bias['output'].size]
+        return [self.weights['embedding'].shape[0], self.bias['embedding'].size, self.bias['updategate'].size, self.bias['output'].size]
     
     def size(self, excluded_keys = {'bias': [], 'weights': []}):
         numel = 0
@@ -197,12 +196,12 @@ class LSTM_NNLM_Weight_with_embedding(object):
 #        self.bias['visible'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[0]))
 #        self.bias['hidden'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[1]))
 #        self.bias['output'] = initial_bias_min + initial_bias_range * np.random.random_sample((1,architecture[2]))
-        self.bias['output'] = 0.2 * np.random.randn(1,architecture[3])
-        self.bias['cell'] = 0.2 * np.random.randn(1,architecture[2])
+#        self.bias['output'] = 0.2 * np.random.randn(1,architecture[3])
+        self.bias['activation'] = 0.2 * np.random.randn(1,architecture[2])
         self.bias['embedding'] = 0.2 * np.random.randn(1,architecture[1])
-        self.bias['forgetgate'] = 0.2 * np.random.randn(1,architecture[2]) - 0.5
-        self.bias['inputgate'] = 0.2 * np.random.randn(1,architecture[2]) + 0.5
-        self.bias['outputgate'] = 0.2 * np.random.randn(1,architecture[2]) + 0.5
+        self.bias['output'] = 0.2 * np.random.randn(1,architecture[3])
+        self.bias['resetgate'] = 0.2 * np.random.randn(1,architecture[2]) + 0.5
+        self.bias['updategate'] = 0.2 * np.random.randn(1,architecture[2]) + 0.5
         
         for weight_name in self.weights_keys:
             if weight_name.startswith('visible'):
@@ -240,12 +239,12 @@ class LSTM_NNLM_Weight_with_embedding(object):
         self.check_weights()
         
     def init_zero_weights(self, architecture, verbose=False, maxent=False):
-        self.bias['output'] = np.zeros((1,architecture[3]))
-        self.bias['cell'] = np.zeros((1,architecture[2]))
+#        self.bias['output'] = np.zeros((1,architecture[3]))
+        self.bias['activation'] = np.zeros((1,architecture[2]))
         self.bias['embedding'] = np.zeros((1,architecture[1]))
-        self.bias['forgetgate'] = np.zeros((1,architecture[2]))
-        self.bias['inputgate'] = np.zeros((1,architecture[2]))
-        self.bias['outputgate'] = np.zeros((1,architecture[2]))
+        self.bias['output'] = np.zeros((1,architecture[3]))
+        self.bias['resetgate'] = np.zeros((1,architecture[2]))
+        self.bias['updategate'] = np.zeros((1,architecture[2]))
         
         for weight_name in self.weights_keys:
             if weight_name.startswith('visible'):
@@ -379,7 +378,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
     
     def __add__(self,addend):
         nn_output = copy.deepcopy(self)
-        if type(addend) is LSTM_NNLM_Weight_with_embedding:
+        if type(addend) is GRU_NNLM_Weight_with_embedding:
             if self.get_architecture() != addend.get_architecture():
                 print "Neural net models do not match... Exiting now"
                 sys.exit()
@@ -401,7 +400,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         
     def __sub__(self,subtrahend):
         nn_output = copy.deepcopy(self)
-        if type(subtrahend) is LSTM_NNLM_Weight_with_embedding:
+        if type(subtrahend) is GRU_NNLM_Weight_with_embedding:
             if self.get_architecture() != subtrahend.get_architecture():
                 print "Neural net models do not match... Exiting now"
                 sys.exit()
@@ -426,7 +425,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         #    print "__mul__ must be by a float or int. Instead it is type", type(scalar), "Exiting now"
         #    sys.exit()
         nn_output = copy.deepcopy(self)
-        if type(multiplier) is LSTM_NNLM_Weight_with_embedding:
+        if type(multiplier) is GRU_NNLM_Weight_with_embedding:
             for key in self.bias_keys:
                 nn_output.bias[key] = self.bias[key] * multiplier.bias[key]
             for key in self.weights_keys:
@@ -448,7 +447,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         #    print "Divide must be by a float or int. Instead it is type", type(scalar), "Exiting now"
         #    sys.exit()
         nn_output = copy.deepcopy(self)
-        if type(divisor) is LSTM_NNLM_Weight_with_embedding:
+        if type(divisor) is GRU_NNLM_Weight_with_embedding:
             for key in self.bias_keys:
                 nn_output.bias[key] = self.bias[key] / divisor.bias[key]
             for key in self.weights_keys:
@@ -478,8 +477,8 @@ class LSTM_NNLM_Weight_with_embedding(object):
         return nn_output
 
     def __iadd__(self, nn_weight2):
-        if type(nn_weight2) is not LSTM_NNLM_Weight_with_embedding:
-            print "argument must be of type LSTM_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
+        if type(nn_weight2) is not GRU_NNLM_Weight_with_embedding:
+            print "argument must be of type GRU_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
             sys.exit()
         if self.get_architecture() != nn_weight2.get_architecture():
             print "Neural net models do not match... Exiting now"
@@ -493,8 +492,8 @@ class LSTM_NNLM_Weight_with_embedding(object):
         return self
     
     def __isub__(self, nn_weight2):
-        if type(nn_weight2) is not LSTM_NNLM_Weight_with_embedding:
-            print "argument must be of type LSTM_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
+        if type(nn_weight2) is not GRU_NNLM_Weight_with_embedding:
+            print "argument must be of type GRU_NNLM_Weight_with_embedding... instead of type", type(nn_weight2), "Exiting now..."
             sys.exit()
         if self.get_architecture() != nn_weight2.get_architecture():
             print "Neural net models do not match... Exiting now"
@@ -520,7 +519,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         return self
     
     def __idiv__(self, other):
-        if type(other) is LSTM_NNLM_Weight_with_embedding:
+        if type(other) is GRU_NNLM_Weight_with_embedding:
             for key in self.bias_keys:
                 self.bias[key] /= other.bias[key]
             for key in self.weights_keys:
@@ -546,7 +545,7 @@ class LSTM_NNLM_Weight_with_embedding(object):
         return self
     
     def __copy__(self):
-        return LSTM_NNLM_Weight_with_embedding(self.weights, self.bias)
+        return GRU_NNLM_Weight_with_embedding(self.weights, self.bias)
     
     def __deepcopy__(self, memo):
-        return LSTM_NNLM_Weight_with_embedding(copy.deepcopy(self.weights,memo), copy.deepcopy(self.bias,memo))
+        return GRU_NNLM_Weight_with_embedding(copy.deepcopy(self.weights,memo), copy.deepcopy(self.bias,memo))

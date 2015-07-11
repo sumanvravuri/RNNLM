@@ -1,8 +1,9 @@
 '''
-Created on Jun 3, 2013
+Created on Jul 2, 2015
 
 @author: sumanravuri
 '''
+
 
 import sys
 import numpy as np
@@ -13,9 +14,9 @@ import argparse
 from Vector_Math import Vector_Math
 import datetime
 from scipy.special import expit
-from LSTM_NNLM_Weight_with_embedding import LSTM_NNLM_Weight_with_embedding
+from RNNLM_Weight import RNNLM_Weight
 
-class LSTM_Neural_Network_Addressee(object, Vector_Math):
+class RNNLM_Neural_Network_Addressee(object, Vector_Math):
     """features are stored in format max_seq_len x nseq x nvis where n_max_obs is the maximum number of observations per sequence
     and nseq is the number of sequences
     weights are stored as nvis x nhid at feature level
@@ -27,7 +28,7 @@ class LSTM_Neural_Network_Addressee(object, Vector_Math):
         all_variables - all valid variables for each type"""
         self.feature_file_name = self.default_variable_define(config_dictionary, 'feature_file_name', arg_type='string')
         self.features, self.feature_sequence_lens, self.dssm = self.read_feature_file()
-        self.model = LSTM_NNLM_Weight_with_embedding()
+        self.model = RNNLM_Weight()
         self.output_name = self.default_variable_define(config_dictionary, 'output_name', arg_type='string')
         self.single_prediction = self.default_variable_define(config_dictionary, 'single_prediction', arg_type='boolean')
         
@@ -200,6 +201,44 @@ class LSTM_Neural_Network_Addressee(object, Vector_Math):
                     dist[(idx1,idx2)] = min (dist[(idx1,idx2)], dist[idx1-2,idx2-2] + cost) # transposition
         return dist[(string1_len-1, string2_len-1)]    
 
+    def make_frame_labels(self, fsl, labels):
+        assert(labels.shape[0] == labels.size)
+        out_labels = np.zeros((sum(fsl,)))
+        start_index = 0
+        for idx, seq_len in enumerate(fsl):
+            end_index = start_index + seq_len
+            out_labels[start_index:end_index] = labels[idx]
+            start_index = end_index
+        
+        return out_labels.astype(np.int32)
+    
+    def make_dssm_batch_features(self, inputs, fsl):
+        if type(inputs) != ssp.csr_matrix:
+            raise ValueError('inputs are not of dssm sparse type')
+        if fsl.size == 1:
+            return inputs
+        
+        max_obs = max(fsl)
+        num_obs = sum(fsl)
+        batch_size = fsl.size
+        
+        cumsum_fsl = np.cumsum(np.hstack((0,fsl[:-1])))
+                  
+        transform_matrix = np.zeros((batch_size*max_obs, num_obs))
+        
+        for obs_index in range(max_obs):
+            start_index = obs_index * batch_size
+            end_index = (obs_index + 1) * batch_size
+            out_rows = np.arange(start_index, end_index)
+            in_rows = cumsum_fsl + obs_index
+            
+            out_rows = out_rows[obs_index < fsl]
+            in_rows = in_rows[obs_index < fsl]
+            
+            transform_matrix[out_rows, in_rows] = 1
+        
+        return ssp.csr_matrix(transform_matrix).dot(inputs)
+    
     def check_keys(self, config_dictionary): #completed
         print "Checking config keys...",
         exit_flag = False
@@ -256,200 +295,157 @@ class LSTM_Neural_Network_Addressee(object, Vector_Math):
 #            print "#", x, "\b's:", label_counts[x]            
         print "labels seem copacetic"
 
-#    def forward_layer(self, inputs, weights, biases, weight_type, prev_hiddens = None, hidden_hidden_weights = None): #completed
-#        if weight_type == 'logistic':
-#            if hidden_hidden_weights is None:
-#                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases))
-#            else:
-#                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases) + hidden_hidden_weights[(inputs),:])
-#        elif weight_type == 'rbm_gaussian_bernoulli' or weight_type == 'rbm_bernoulli_bernoulli':
-#            return self.sigmoid(inputs.T.dot(weights.T).T + self.weight_matrix_multiply(prev_hiddens, hidden_hidden_weights, biases))
-#        #added to test finite differences calculation for pearlmutter forward pass
-#        elif weight_type == 'linear': #only used for the logistic layer
-#            return self.weight_matrix_multiply(inputs, weights, biases)
-#        else:
-#            print "weight_type", weight_type, "is not a valid layer type.",
-#            print "Valid layer types are", self.model.valid_layer_types,"Exiting now..."
-#            sys.exit()
-#            
-    def make_dssm_batch_features(self, inputs, fsl):
-        if type(inputs) != ssp.csr_matrix:
-            raise ValueError('inputs are not of dssm sparse type')
-        if fsl.size == 1:
-            return inputs
-        
-        max_obs = max(fsl)
-        num_obs = sum(fsl)
-        batch_size = fsl.size
-        
-        cumsum_fsl = np.cumsum(np.hstack((0,fsl[:-1])))
-                  
-        transform_matrix = np.zeros((batch_size*max_obs, num_obs))
-        
-        for obs_index in range(max_obs):
-            start_index = obs_index * batch_size
-            end_index = (obs_index + 1) * batch_size
-            out_rows = np.arange(start_index, end_index)
-            in_rows = cumsum_fsl + obs_index
+    def forward_layer(self, inputs, weights, biases, weight_type, prev_hiddens = None, hidden_hidden_weights = None): #completed
+        if weight_type == 'logistic':
+            if hidden_hidden_weights is None:
+                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases))
+            else:
+                return self.softmax(self.weight_matrix_multiply(inputs, weights, biases) + hidden_hidden_weights[(inputs),:])
+        elif weight_type == 'rbm_gaussian_bernoulli' or weight_type == 'rbm_bernoulli_bernoulli':
+            return self.sigmoid(inputs.T.dot(weights.T).T + self.weight_matrix_multiply(prev_hiddens, hidden_hidden_weights, biases))
+        #added to test finite differences calculation for pearlmutter forward pass
+        elif weight_type == 'linear': #only used for the logistic layer
+            return self.weight_matrix_multiply(inputs, weights, biases)
+        else:
+            print "weight_type", weight_type, "is not a valid layer type.",
+            print "Valid layer types are", self.model.valid_layer_types,"Exiting now..."
+            sys.exit()
             
-            out_rows = out_rows[obs_index < fsl]
-            in_rows = in_rows[obs_index < fsl]
-            
-            transform_matrix[out_rows, in_rows] = 1
-        
-        return ssp.csr_matrix(transform_matrix).dot(inputs)
-    
-    def forward_pass_single_batch(self, inputs, model = None, return_hiddens = False, single_prediction = True):
+    def forward_pass_single_batch(self, inputs, model = None, return_hiddens = False, linear_output = False):
         """forward pass for single batch size. Mainly for speed in this case
-        single prediction means that only one prediction is given at the end of the LSTM
         """
         if model == None:
             model = self.model
-        num_observations = inputs.shape[0]
-#        print inputs.shape
-        if len(inputs.shape) != 1: #means we are using DSSM
-            embedding = inputs.dot(model.weights['embedding']) + model.bias['embedding']
-        else:
-            embedding = model.weights['embedding'][(inputs),:] + model.bias['embedding']
-            
-        input_gate = self.weight_matrix_multiply(embedding, model.weights['visible_inputgate'], model.bias['inputgate'])#hack because of crappy sparse matrix support
-        output_gate = self.weight_matrix_multiply(embedding, model.weights['visible_outputgate'], model.bias['outputgate'])
-        forget_gate = self.weight_matrix_multiply(embedding, model.weights['visible_forgetgate'], model.bias['forgetgate'])
-        part_cell = self.weight_matrix_multiply(embedding, model.weights['visible_cell'], model.bias['cell'])
+        num_observations = inputs.size
+        hiddens = model.weights['visible_hidden'][(inputs),:]
+        hiddens[:1,:] += self.weight_matrix_multiply(model.init_hiddens, model.weights['hidden_hidden'], model.bias['hidden'])
+#        np.clip(hiddens[0, :], a_min = 0.0, out = hiddens[0, :])
+        expit(hiddens[0,:], hiddens[0,:])
         
-        hiddens = np.empty(input_gate.shape)
-        cell = np.empty(input_gate.shape)
-        #propagate layer at first time step
-#        print "linear input_gate"
-#        print input_gate[0]
-        expit(input_gate[0], input_gate[0])
-        np.tanh(part_cell[0], part_cell[0])
-        expit(forget_gate[0], forget_gate[0])
-        cell[0] = part_cell[0] * input_gate[0]
-#        print "input_gate"
-#        print input_gate[0]
-        output_gate[0] += np.dot(cell[0], model.weights['curcell_outputgate'])
-        expit(output_gate[0], output_gate[0])
-#        print "tanh(cell)"
-#        print np.tanh(cell[0])
-#        print "output_gate"
-#        print output_gate[0]
-        hiddens[0] = output_gate[0] * np.tanh(cell[0])
-#        print "hiddens"
-#        print hiddens[0]
         for time_step in range(1, num_observations):
-#            print time_step
-            input_gate[time_step] += np.dot(hiddens[time_step-1], model.weights['hidden_inputgate'])
-            input_gate[time_step] += np.dot(cell[time_step-1], model.weights['prevcell_inputgate'])
-            expit(input_gate[time_step], input_gate[time_step])
-            
-            forget_gate[time_step] += np.dot(hiddens[time_step-1], model.weights['hidden_forgetgate'])
-            forget_gate[time_step] += np.dot(cell[time_step-1], model.weights['prevcell_forgetgate'])
-            expit(forget_gate[time_step], forget_gate[time_step])
-            
-            part_cell[time_step] += np.dot(hiddens[time_step-1], model.weights['hidden_cell'])
-            np.tanh(part_cell[time_step], part_cell[time_step])
-            cell[time_step] = part_cell[time_step] * input_gate[time_step] + forget_gate[time_step] * cell[time_step-1]
-            
-            output_gate[time_step] += np.dot(hiddens[time_step-1], model.weights['hidden_outputgate'])
-            output_gate[time_step] += np.dot(cell[time_step], model.weights['curcell_outputgate'])
-            expit(output_gate[time_step], output_gate[time_step])
-            
-            hiddens[time_step] = np.tanh(cell[time_step]) * output_gate[time_step]
+            hiddens[time_step:time_step+1,:] += self.weight_matrix_multiply(hiddens[time_step-1:time_step,:], model.weights['hidden_hidden'], model.bias['hidden'])
+#            np.clip(hiddens[time_step, :], a_min = 0.0, out = hiddens[time_step, :])
+            expit(hiddens[time_step,:], hiddens[time_step,:]) #sigmoid
         
-        if single_prediction:
-            if num_observations > 1:
-                output = self.softmax(self.weight_matrix_multiply(hiddens[-1:], model.weights['hidden_output'], model.bias['output']))
-            else:
-                output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
+        if 'visible_output' in model.weights:
+            outputs = self.forward_layer(hiddens, model.weights['hidden_output'], model.bias['output'], model.weight_type['hidden_output'],
+                                         model.weights['visible_output'])
         else:
-            output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
-                
+            outputs = self.forward_layer(hiddens, model.weights['hidden_output'], model.bias['output'], model.weight_type['hidden_output'])
+        
         if return_hiddens:
-            return output, embedding, input_gate, forget_gate, output_gate, part_cell, cell, hiddens
+            return outputs, hiddens
         else:
-            del embedding, input_gate, forget_gate, output_gate, part_cell, cell, hiddens
-            return output
+            del hiddens
+            return outputs
     
     
     def forward_pass_multi_batch(self, inputs, feature_sequence_lens, model = None,
                                  return_hiddens = False, single_prediction = True):
         """forward pass for single batch size. Mainly for speed in this case
-        single prediction means that only one prediction is given at the end of the LSTM
+        single prediction means that only one prediction is given at the end of the RNNLM
         """
         if model == None:
             model = self.model
         
-#        if type(inputs) == ssp.csr_matrix:
-#            raise ValueError('DSSM not yet implemented')
+        if type(inputs) == ssp.csr_matrix:
+            raise ValueError('DSSM not yet implemented')
 #        print inputs.shape
         num_observations, batch_size = max(feature_sequence_lens), feature_sequence_lens.size
-        mask = np.zeros((batch_size, model.weights['visible_inputgate'].shape[1]))
+        mask = np.zeros((batch_size, model.weights['visible_hidden'].shape[1]))
         if not self.dssm:
             linear_feats = inputs.ravel()
-            embedding = model.weights['embedding'][(linear_feats),:]# + model.bias['embedding']
+            hiddens = model.weights['embedding'][(linear_feats),:]# + model.bias['embedding']
         else:
-            embedding = self.make_dssm_batch_features(inputs, feature_sequence_lens).dot(model.weights['embedding'])
+            hiddens = self.make_dssm_batch_features(inputs, feature_sequence_lens).dot(model.weights['embedding'])
 #        if len(inputs.shape) != 1: #means we are using DSSM
 #            embedding = inputs.dot(model.weights['embedding']) + model.bias['embedding']
 #        else:
 #            embedding = model.weights['embedding'][(inputs),:] + model.bias['embedding']
-            
-        input_gate = self.weight_matrix_multiply(embedding, model.weights['visible_inputgate'], model.bias['inputgate'])#hack because of crappy sparse matrix support
-        output_gate = self.weight_matrix_multiply(embedding, model.weights['visible_outputgate'], model.bias['outputgate'])
-        forget_gate = self.weight_matrix_multiply(embedding, model.weights['visible_forgetgate'], model.bias['forgetgate'])
-        part_cell = self.weight_matrix_multiply(embedding, model.weights['visible_cell'], model.bias['cell'])
         
-        hiddens = np.empty(input_gate.shape)
-        cell = np.empty(input_gate.shape)
+#        update_gate = self.weight_matrix_multiply(embedding, model.weights['visible_updategate'], model.bias['updategate'])#hack because of crappy sparse matrix support
+#        reset_gate = self.weight_matrix_multiply(embedding, model.weights['visible_resetgate'], model.bias['resetgate'])
+#        forget_gate = self.weight_matrix_multiply(embedding, model.weights['visible_forgetgate'], model.bias['forgetgate'])
+        hiddens[:batch_size] += self.weight_matrix_multiply(model.init_hiddens, model.weights['hidden_hidden'], 
+                                                            model.bias['hidden'])
+        
+#        hiddens = np.empty(update_gate.shape)
+#        cell = np.empty(input_gate.shape)
         #propagate layer at first time step
 #        print "linear input_gate"
 #        print input_gate[0]
-        expit(input_gate[:batch_size], input_gate[:batch_size])
-        np.tanh(part_cell[:batch_size], part_cell[:batch_size])
-        expit(forget_gate[:batch_size], forget_gate[:batch_size])
-        cell[:batch_size] = part_cell[:batch_size] * input_gate[:batch_size]
+#        expit(update_gate[:batch_size], update_gate[:batch_size])
+        expit(hiddens[:batch_size], hiddens[:batch_size])
+#        expit(reset_gate[:batch_size], reset_gate[:batch_size])
+#        cell[:batch_size] = part_cell[:batch_size] * input_gate[:batch_size]
 #        print "input_gate"
 #        print input_gate[:batch_size]
-        output_gate[:batch_size] += np.dot(cell[:batch_size], model.weights['curcell_outputgate'])
-        expit(output_gate[:batch_size], output_gate[:batch_size])
+#        output_gate[:batch_size] += np.dot(cell[:batch_size], model.weights['curcell_outputgate'])
+#        expit(output_gate[:batch_size], output_gate[:batch_size])
 #        print "tanh(cell)"
 #        print np.tanh(cell[:batch_size])
 #        print "output_gate"
 #        print output_gate[:batch_size]
-        hiddens[:batch_size] = output_gate[:batch_size] * np.tanh(cell[:batch_size])
+#        hiddens[:batch_size] = update_gate[:batch_size] * activation[:batch_size]#output_gate[:batch_size] * np.tanh(cell[:batch_size])
 #        print "hiddens"
 #        print hiddens[0]
+        
+        if not single_prediction and not return_hiddens:
+            output = np.empty((sum(feature_sequence_lens), model.bias['output'].size))
+            zero_out = np.array([0])
+            out_fsl = np.cumsum(np.hstack((zero_out, feature_sequence_lens[:-1])))
+#            A = np.eye(batch_size)
+#            output_buffer = 
+            output[out_fsl,:] = self.softmax(self.weight_matrix_multiply(hiddens[:batch_size], 
+                                                                         model.weights['hidden_output'], 
+                                                                         model.bias['output']))
+        elif not single_prediction:
+            output_mask = np.zeros((hiddens.shape[0],model.bias['output'].size))
+            output_mask[:batch_size,:] = 1
+        
         for time_step in range(1, num_observations):
 #            print time_step
+
             mask[:] = 1.0
             mask[(feature_sequence_lens <= time_step), :] = 0.0
             start_index = time_step*batch_size
             end_index = (time_step+1)*batch_size
+            prev_index = (time_step-1)*batch_size
             
-            input_gate[start_index:end_index] += np.dot(hiddens[(time_step-1)*batch_size:time_step*batch_size], model.weights['hidden_inputgate'])
-            input_gate[start_index:end_index] += np.dot(cell[(time_step-1)*batch_size:time_step*batch_size], model.weights['prevcell_inputgate'])
-            expit(input_gate[start_index:end_index], input_gate[start_index:end_index])
-            input_gate[start_index:end_index] *= mask
-            
-            forget_gate[start_index:end_index] += np.dot(hiddens[(time_step-1)*batch_size:time_step*batch_size], model.weights['hidden_forgetgate'])
-            forget_gate[start_index:end_index] += np.dot(cell[(time_step-1)*batch_size:time_step*batch_size], model.weights['prevcell_forgetgate'])
-            expit(forget_gate[start_index:end_index], forget_gate[start_index:end_index])
-            forget_gate[start_index:end_index] *= mask
-            
-            part_cell[start_index:end_index] += np.dot(hiddens[(time_step-1)*batch_size:time_step*batch_size], model.weights['hidden_cell'])
-            np.tanh(part_cell[start_index:end_index], part_cell[start_index:end_index])
-            cell[start_index:end_index] = part_cell[start_index:end_index] * input_gate[start_index:end_index] + forget_gate[start_index:end_index] * cell[(time_step-1)*batch_size:time_step*batch_size]
-            part_cell[start_index:end_index] *= mask
-            cell[start_index:end_index] *= mask
-            
-            output_gate[start_index:end_index] += np.dot(hiddens[(time_step-1)*batch_size:time_step*batch_size], model.weights['hidden_outputgate'])
-            output_gate[start_index:end_index] += np.dot(cell[start_index:end_index], model.weights['curcell_outputgate'])
-            expit(output_gate[start_index:end_index], output_gate[start_index:end_index])
-            output_gate[start_index:end_index] *= mask
-            
-            hiddens[start_index:end_index] = np.tanh(cell[start_index:end_index]) * output_gate[start_index:end_index]
+            hiddens[start_index:end_index] += self.weight_matrix_multiply(hiddens[prev_index:start_index], model.weights['hidden_hidden'], model.bias['hidden'])
+#            reset_gate[start_index:end_index] += np.dot(cell[prev_index:start_index], model.weights['prevcell_inputgate'])
+            expit(hiddens[start_index:end_index], hiddens[start_index:end_index])
             hiddens[start_index:end_index] *= mask
+            
+            if not single_prediction and not return_hiddens:
+                output_index = out_fsl[feature_sequence_lens > time_step] + time_step
+                output[output_index] = self.softmax(self.weight_matrix_multiply(hiddens[start_index:end_index], 
+                                                                                model.weights['hidden_output'], 
+                                                                                model.bias['output']))[feature_sequence_lens > time_step]
+            elif not single_prediction:
+#                print start_index, np.where(feature_sequence_lens > time_step)[0], feature_sequence_lens
+                output_mask[np.where(feature_sequence_lens > time_step)[0]+start_index,:] = 1
+#            update_gate[start_index:end_index] += np.dot(hiddens[prev_index:start_index], model.weights['prevhidden_updategate'])
+#            forget_gate[start_index:end_index] += np.dot(cell[prev_index:start_index], model.weights['prevcell_forgetgate'])
+#            expit(update_gate[start_index:end_index], update_gate[start_index:end_index])
+#            update_gate[start_index:end_index] *= mask
+            
+#            activation[start_index:end_index] += (np.dot(hiddens[prev_index:start_index] * reset_gate[start_index:end_index], 
+#                                                         model.weights['prevhidden_activation']))
+#            np.tanh(activation[start_index:end_index], activation[start_index:end_index])
+#            activation[start_index:end_index] *= mask
+#            cell[start_index:end_index] = part_cell[start_index:end_index] * input_gate[start_index:end_index] + forget_gate[start_index:end_index] * cell[prev_index:start_index]
+#            part_cell[start_index:end_index] *= mask
+#            cell[start_index:end_index] *= mask
+#            
+#            output_gate[start_index:end_index] += np.dot(hiddens[prev_index:start_index], model.weights['hidden_outputgate'])
+#            output_gate[start_index:end_index] += np.dot(cell[start_index:end_index], model.weights['curcell_outputgate'])
+#            expit(output_gate[start_index:end_index], output_gate[start_index:end_index])
+#            output_gate[start_index:end_index] *= mask
+            
+#            hiddens[start_index:end_index] = (update_gate[start_index:end_index] * activation[start_index:end_index] +
+#                                              (1-update_gate[start_index:end_index]) * hiddens[prev_index:start_index]) * mask
+#            hiddens[start_index:end_index] *= mask
             
 #        unordered_output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
         if single_prediction:
@@ -463,125 +459,65 @@ class LSTM_Neural_Network_Addressee(object, Vector_Math):
                 output = self.softmax(self.weight_matrix_multiply(ordered_hiddens, model.weights['hidden_output'], model.bias['output']))
             else:
                 unordered_output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
+                output_mask = np.zeros(unordered_output.shape)
+                indices = (feature_sequence_lens-1) * batch_size + range(feature_sequence_lens.size)
+                output_mask[indices, :] = 1
 #            if num_observations > 1:
 #                output = self.softmax(self.weight_matrix_multiply(hiddens[-1:], model.weights['hidden_output'], model.bias['output']))
 #            else:
 #                output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
-        else:
-            raise ValueError('multi-prediction not yet implemented')
-            outputs = np.zeros((sum(feature_sequence_lens, unordered_output.shape[1])))
-            start_index = 0
-            for seq_index, seq_len in enumerate(feature_sequence_lens):
-                end_index = start_index + seq_len
-                indices = range(seq_len) * batch_size + seq_index
-                outputs[start_index:end_index] = unordered_output[indices]
-                start_index = end_index
-            output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
+        elif return_hiddens:
+            unordered_output = self.softmax(self.weight_matrix_multiply(hiddens, model.weights['hidden_output'], model.bias['output']))
                 
         if return_hiddens: #return unordered output for backprop
-            mask = np.zeros(unordered_output.shape)
-            if not single_prediction:
-                raise ValueError('multi-prediction not yet implemented')
-            indices = (feature_sequence_lens-1) * batch_size + range(feature_sequence_lens.size)
-            mask[indices, :] = 1
+#            mask = np.zeros(unordered_output.shape)
+#            if not single_prediction:
+#                raise ValueError('multi-prediction not yet implemented')
+#            indices = (feature_sequence_lens-1) * batch_size + range(feature_sequence_lens.size)
+#            mask[indices, :] = 1
 #            print mask
             
-            return unordered_output * mask, embedding, input_gate, forget_gate, output_gate, part_cell, cell, hiddens
+            return unordered_output * output_mask, hiddens
         else:
-            del embedding, input_gate, forget_gate, output_gate, part_cell, cell, hiddens
+            del hiddens
             return output
         
-    def forward_pass(self, features, feature_sequence_lens, model=None, return_hiddens=False): #completed
+    def forward_pass(self, inputs, feature_sequence_lens, model=None, return_hiddens=False): #completed
         """forward pass each layer starting with feature level
         inputs in the form n_max_obs x n_seq x n_vis"""
-        
         if model == None:
             model = self.model
-        
-        excluded_keys = {'bias': ['0'], 'weights': []}
-        
-        classification_batch_size = 64
-
-        batch_index = 0
-        end_index = 0
-
+        architecture = self.model.get_architecture()
+#        max_sequence_observations = max(feature_sequence_lens)
         num_sequences = len(feature_sequence_lens)
-        if self.single_prediction:
-            num_examples = len(feature_sequence_lens)
-        else:
-            num_examples = sum(feature_sequence_lens)
-            
-        output = np.zeros((num_examples, model.bias['output'].size))
-#        print features.shape
-        cumsum_fsl = np.concatenate((np.array([0]), np.cumsum(feature_sequence_lens.T)))
-        start_frame = 0
-        while end_index < num_sequences: #run through the batches
-#            sys.stdout.write("\r                                                                \r") #clear line
-#            sys.stdout.write("\rCalculating Classification Statistics: %.1f%% done " % per_done), sys.stdout.flush()
-            end_index = min(batch_index+classification_batch_size, num_sequences)
-#            max_seq_len = max(feature_sequence_lens[batch_index:end_index])
-#            start_frame = np.where(flat_labels[:,0] == batch_index)[0][0]
-            end_frame = cumsum_fsl[end_index]
-            end_index = min(batch_index+classification_batch_size, num_sequences)
-            max_seq_len = max(feature_sequence_lens[batch_index:end_index])
-#            print batch_index, max_seq_len
+#        num_hiddens = architecture[1]
+        num_outs = architecture[-1]
+        if return_hiddens:
+            print "returning hiddens for multiple sequences at a time is not yet implemented... try forward_pass_single_batch"
+            raise ValueError
+#            hiddens = np.zeros((max_sequence_observations, num_sequences, num_hiddens))
+        outputs = np.zeros((sum(feature_sequence_lens), num_outs))
+        #propagate hiddens
+        cur_index = 0
+        end_index = cur_index
+        for sequence_index, feature_sequence_len in enumerate(feature_sequence_lens):
+#            print sequence_index, feature_sequence_len
+            end_index += feature_sequence_len
             if self.dssm:
-                if self.single_prediction:
-                    output[batch_index:end_index] = self.forward_pass_multi_batch(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], 
-                                                                                  model = model)
-                else:
-                    output[start_frame:end_frame] = self.forward_pass_multi_batch(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], model=model,
-                                                                                  single_prediction = False)
+                batch_inputs = inputs[cur_index:end_index]
             else:
-                if self.single_prediction:
-#                    output = self.forward_pass(features[:max_seq_len,batch_index:end_index], 
-#                                               feature_sequence_lens[batch_index:end_index], model=model)
-                    output[batch_index:end_index] = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
-                                                                                  feature_sequence_lens[batch_index:end_index], model=model)
-                else:
-                    output[start_frame:end_frame] = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
-                                                                                  feature_sequence_lens[batch_index:end_index], model=model,
-                                                                                  single_prediction = False)
-
-            batch_index += classification_batch_size
-            start_frame = end_frame
-        
-#        sys.stdout.write("\r                                                                \r") #clear line
-        return output
-        
-#        if model == None:
-#            model = self.model
-#        architecture = self.model.get_architecture()
-##        max_sequence_observations = max(feature_sequence_lens)
-#        num_sequences = len(feature_sequence_lens)
-##        num_hiddens = architecture[1]
-#        num_outs = architecture[-1]
-#        if return_hiddens:
-#            print "returning hiddens for multiple sequences at a time is not yet implemented... try forward_pass_single_batch"
-#            raise ValueError
-##            hiddens = np.zeros((max_sequence_observations, num_sequences, num_hiddens))
-#        outputs = np.zeros((num_sequences, num_outs))
-#        #propagate hiddens
-#        cur_index = 0
-#        end_index = cur_index
-#        for sequence_index, feature_sequence_len in enumerate(feature_sequence_lens):
-##            print sequence_index, feature_sequence_len
-#            end_index += feature_sequence_len
-#            if self.dssm:
-#                batch_inputs = inputs[cur_index:end_index]
+                batch_inputs = inputs[:feature_sequence_len, sequence_index]
+            outputs[cur_index:end_index, :] = self.forward_pass_single_batch(batch_inputs, model, return_hiddens)
 #            else:
-#                batch_inputs = inputs[:feature_sequence_len, sequence_index]
-#            outputs[sequence_index, :] = self.forward_pass_single_batch(batch_inputs, model, return_hiddens, single_prediction = True)
-##            else:
-##                outputs[:feature_sequence_len, sequence_index, :], hiddens[:feature_sequence_len, sequence_index, :] = self.forward_pass_single_batch(inputs[cur_index:end_index], model, 
-##                                                                                                                                                      return_hiddens)
-#            cur_index = end_index
-#
-#        if return_hiddens:
-#            return outputs, hiddens
-#        else:
-##            del hiddens
-#            return outputs
+#                outputs[:feature_sequence_len, sequence_index, :], hiddens[:feature_sequence_len, sequence_index, :] = self.forward_pass_single_batch(inputs[cur_index:end_index], model, 
+#                                                                                                                                                      return_hiddens)
+            cur_index = end_index
+
+        if return_hiddens:
+            return outputs, hiddens
+        else:
+#            del hiddens
+            return outputs
     
     def forward_pass_multi_output(self, inputs, feature_sequence_lens, model=None, return_hiddens=False): #completed
         """forward pass each layer starting with feature level
@@ -654,7 +590,7 @@ class LSTM_Neural_Network_Addressee(object, Vector_Math):
         return classification_accuracy[0]
     
 
-class LSTM_Neural_Network_Addressee_Tester(LSTM_Neural_Network_Addressee): #completed
+class RNNLM_Neural_Network_Addressee_Tester(RNNLM_Neural_Network_Addressee): #completed
     def __init__(self, config_dictionary): #completed
         """runs DNN tester soup to nuts.
         variables are
@@ -664,7 +600,7 @@ class LSTM_Neural_Network_Addressee_Tester(LSTM_Neural_Network_Addressee): #comp
         label_file_name - label file to check accuracy
         required are feature_file_name, weight_matrix_name, and output_name"""
         self.mode = 'test'
-        super(LSTM_Neural_Network_Addressee_Tester,self).__init__(config_dictionary)
+        super(RNNLM_Neural_Network_Addressee_Tester,self).__init__(config_dictionary)
         self.check_keys(config_dictionary)
         
         self.weight_matrix_name = self.default_variable_define(config_dictionary, 'weight_matrix_name', arg_type='string')
@@ -677,17 +613,17 @@ class LSTM_Neural_Network_Addressee_Tester(LSTM_Neural_Network_Addressee): #comp
         else:
             del self.label_file_name
         self.dump_config_vals()
-        if self.single_prediction:
-            self.classify()
-        else:
-            self.classify_multi_output()
+        self.classify()
+#        if self.single_prediction:
+#            self.classify()
+#        else:
+#            self.classify_multi_output()
         self.write_posterior_prob_file()
 #        self.classify_log_perplexity()
 #        self.write_log_perplexity_file()
     
     def classify(self): #completed
-#        self.posterior_probs = self.forward_pass_multi_batch(self.features, self.feature_sequence_lens)
-        self.posterior_probs = self.forward_pass(self.features, self.feature_sequence_lens)
+        self.posterior_probs = self.forward_pass_multi_batch(self.features, self.feature_sequence_lens, single_prediction = self.single_prediction)
         try:
             avg_cross_entropy = self.calculate_cross_entropy(self.flat_posterior_probs, self.labels) / self.labels.size
             print "Average cross-entropy is", avg_cross_entropy
@@ -715,7 +651,7 @@ class LSTM_Neural_Network_Addressee_Tester(LSTM_Neural_Network_Addressee): #comp
             print "Unable to write to ", self.output_name, "... Exiting now"
             sys.exit()
 
-class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
+class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
     def __init__(self,config_dictionary): #completed
         """variables in NN_trainer object are:
         mode (set to 'train')
@@ -750,7 +686,7 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         old_settings = np.seterr(over='raise',under='raise',invalid='raise')
         
         self.mode = 'train'
-        super(LSTM_Neural_Network_Addressee_Trainer,self).__init__(config_dictionary)
+        super(RNNLM_Neural_Network_Addressee_Trainer,self).__init__(config_dictionary)
         self.num_training_examples = self.batch_size(self.feature_sequence_lens)
         self.num_sequences = self.feature_sequence_lens.size
         self.check_keys(config_dictionary)
@@ -789,7 +725,7 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 architecture.append(np.max(self.labels[:,1])+1) #will have to change later if I have soft weights
 #                architecture.append(np.max(self.labels.ravel())+1) #will have to change later if I have soft weights
 #            print architecture
-            self.seed = self.default_variable_define(config_dictionary, 'seed', 'int', default_value = 0)
+            self.seed = self.default_variable_define(config_dictionary, 'seed', 'int', '0')
 #            self.initial_weight_max = self.default_variable_define(config_dictionary, 'initial_weight_max', arg_type='float', default_value=0.1)
 #            self.initial_weight_min = self.default_variable_define(config_dictionary, 'initial_weight_min', arg_type='float', default_value=-0.1)
 #            self.initial_bias_max = self.default_variable_define(config_dictionary, 'initial_bias_max', arg_type='float', default_value=0.1)
@@ -1032,10 +968,10 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 gradient_weights += model * l2_regularization_const
             sys.stdout.write("\r                                                                \r")
             print "checking gradient..."
-            finite_difference_model = LSTM_NNLM_Weight_with_embedding()
+            finite_difference_model = RNNLM_Weight()
             finite_difference_model.init_zero_weights(self.model.get_architecture(), verbose=False)
             
-            direction = LSTM_NNLM_Weight_with_embedding()
+            direction = RNNLM_Weight()
             direction.init_zero_weights(self.model.get_architecture(), verbose=False)
             epsilon = 1E-5
 #            print "at initial hiddens"
@@ -1103,9 +1039,17 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         num_observations, batch_size = max(fsl), fsl.size
         
         
-        output, embedding, input_gate, forget_gate, output_gate, part_cell, cell, hiddens = self.forward_pass_multi_batch(batch_inputs, fsl, model, 
-                                                                                                                          return_hiddens = True,
-                                                                                                                          single_prediction = single_prediction)
+        output, hiddens = self.forward_pass_multi_batch(batch_inputs, fsl, model, return_hiddens = True,
+                                                        single_prediction = single_prediction)
+        
+#        output_multi = self.forward_pass_multi_batch(batch_inputs, fsl, model, return_hiddens = False,
+#                                                     single_prediction = single_prediction)
+#        
+#        output_ref = self.forward_pass(batch_inputs, fsl, model, return_hiddens=False)
+#        print "***************************"
+#        print fsl
+#        print output_multi - output_ref
+#        print "***************************"
         
         indices = (fsl - 1) * batch_size + range(fsl.size)
         
@@ -1122,102 +1066,156 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         if self.single_prediction:
             delta_output[indices, batch_labels] -= 1.0
         else:
-            raise ValueError('multiple outputs not yet implemented')
-            for x in range(delta_output.shape[0]):
-                delta_output[x][batch_labels] -= 1.0
-        mask = np.ones((batch_size, model.get_architecture()[2]))
-        eps_hidden = np.empty((num_observations * batch_size, model.get_architecture()[2]))
-        eps_state = np.empty(eps_hidden.shape)
-        delta_output_gate = np.empty(eps_hidden.shape)
-        delta_input_gate = np.empty(eps_hidden.shape)
-        delta_forget_gate = np.empty(eps_hidden.shape)
-        delta_cell = np.empty(eps_hidden.shape)
+            frame_labels = np.tile(batch_labels, (num_observations,))
+            output_mask = np.where(np.sum(output, axis = 1) == 0.0)[0]
+#            print np.sum(output, axis = 1)
+#            print output_mask
+            delta_output[np.arange(frame_labels.size), frame_labels] -= 1.0
+            delta_output[(output_mask), :] = 0
+#            raise ValueError('multiple outputs not yet implemented')
+#            for x in range(delta_output.shape[0]):
+#                delta_output[x][batch_labels] -= 1.0
+        mask = np.ones((batch_size, model.bias['hidden'].size))
+#        ones_vec = np.ones((model.get_architecture()[2],))
+        eps_hidden = np.empty((num_observations * batch_size, model.bias['hidden'].size))
+#        delta_activation = np.empty(eps_hidden.shape)
+#        delta_update_gate = np.empty(eps_hidden.shape)
+#        delta_reset_gate = np.empty(eps_hidden.shape)
+#        delta_forget_gate = np.empty(eps_hidden.shape)
+#        delta_cell = np.empty(eps_hidden.shape)
         
 #        if num_observations > 1:
         step = num_observations-1
         mask[(fsl <= step), :] = 0.0
         start_index = batch_size * step
         end_index = batch_size * (step + 1)
-        prev_index = batch_size * (step - 1)
+#        prev_index = batch_size * (step - 1)
+        hidden_deriv = hiddens[start_index:end_index] * (1 - hiddens[start_index:end_index]) * mask
 #        print 1 / (1-input_gate[step])
 #        quit()
-        part_cell_deriv = (1 + part_cell[start_index:end_index]) * (1 - part_cell[start_index:end_index])
-        cell_deriv = 1 - np.tanh(cell[start_index:end_index]) ** 2
-        part_cell_deriv *= mask
-        cell_deriv *= mask
+#        activation_deriv = (1 + activation[start_index:end_index]) * (1 - activation[start_index:end_index]) * mask
+#        update_gate_deriv = update_gate[start_index:end_index] * (1 - update_gate[start_index:end_index]) * mask
+#        reset_gate_deriv = reset_gate[start_index:end_index] * (1 - reset_gate[start_index:end_index]) * mask
+#        cell_deriv = 1 - np.tanh(cell[start_index:end_index]) ** 2
+#        activation_deriv *= mask
+#        cell_deriv *= mask
         
         np.dot(delta_output, model.weights['hidden_output'].T, out = eps_hidden)
-        delta_output_gate[start_index:end_index] = eps_hidden[start_index:end_index] * (1 - output_gate[start_index:end_index]) * hiddens[start_index:end_index]
-        delta_output_gate[start_index:end_index] *= mask
         
-        eps_state[start_index:end_index] = (eps_hidden[start_index:end_index] * output_gate[start_index:end_index] * cell_deriv
-                                            + np.dot(delta_output_gate[start_index:end_index], model.weights['curcell_outputgate'].T))
-        eps_state[start_index:end_index] *= mask
-        delta_cell[start_index:end_index] = eps_state[start_index:end_index] * input_gate[start_index:end_index] * part_cell_deriv
-        delta_cell[start_index:end_index] *= mask
-        if num_observations > 1:
-            delta_forget_gate[start_index:end_index] = (eps_state[start_index:end_index] * cell[prev_index:start_index] * 
-                                                        forget_gate[start_index:end_index] * (1 - forget_gate[start_index:end_index]))
-        else:
-            delta_forget_gate[start_index:end_index] = 0.0
-        delta_input_gate[start_index:end_index] = (eps_state[start_index:end_index] * part_cell[start_index:end_index] * 
-                                                   input_gate[start_index:end_index] * (1 - input_gate[start_index:end_index]))
-        delta_input_gate[start_index:end_index] *= mask
-        delta_forget_gate[start_index:end_index] *= mask
+        eps_hidden[start_index:end_index] *= hidden_deriv * mask
+#        delta_update_gate[start_index:end_index] = (eps_hidden[start_index:end_index] * (activation[start_index:end_index] - hiddens[prev_index:start_index])
+#                                                    * update_gate_deriv)
+##        delta_update_gate[start_index:end_index] *= mask
+#        
+#        delta_activation[start_index:end_index] = (eps_hidden[start_index:end_index] * update_gate[start_index:end_index] *
+#                                                   activation_deriv * mask)
+#        if num_observations > 1:
+#            delta_reset_gate[start_index:end_index] = (np.dot(delta_activation[start_index:end_index], 
+#                                                              model.weights['prevhidden_activation'].T) * 
+#                                                       hiddens[prev_index:start_index] * 
+#                                                       reset_gate_deriv) * mask
+#        else:
+#            delta_reset_gate[start_index:end_index] = 0.0
+        
+#        eps_state[start_index:end_index] = (eps_hidden[start_index:end_index] * output_gate[start_index:end_index] * cell_deriv
+#                                            + np.dot(delta_output_gate[start_index:end_index], model.weights['curcell_outputgate'].T))
+#        eps_state[start_index:end_index] *= mask
+#        delta_cell[start_index:end_index] = eps_state[start_index:end_index] * input_gate[start_index:end_index] * part_cell_deriv
+#        delta_cell[start_index:end_index] *= mask
+#        if num_observations > 1:
+#            delta_forget_gate[start_index:end_index] = (eps_state[start_index:end_index] * cell[prev_index:start_index] * 
+#                                                        forget_gate[start_index:end_index] * (1 - forget_gate[start_index:end_index]))
+#        else:
+#            delta_forget_gate[start_index:end_index] = 0.0
+#        delta_input_gate[start_index:end_index] = (eps_state[start_index:end_index] * part_cell[start_index:end_index] * 
+#                                                   input_gate[start_index:end_index] * (1 - input_gate[start_index:end_index]))
+#        delta_input_gate[start_index:end_index] *= mask
+#        delta_forget_gate[start_index:end_index] *= mask
         
         for step in range(num_observations-2, -1, -1):
             mask[:] = 1.0
             mask[(fsl <= step), :] = 0.0
             start_index = batch_size * step
             end_index = batch_size * (step + 1)
-            prev_index = batch_size * (step - 1)
+#            prev_index = batch_size * (step - 1)
             next_index = batch_size * (step + 2)
             
-            part_cell_deriv = (1 + part_cell[start_index:end_index]) * (1 - part_cell[start_index:end_index])
-            cell_deriv = 1 - np.tanh(cell[start_index:end_index]) ** 2
-            part_cell_deriv *= mask
-            cell_deriv *= mask
-            eps_hidden[start_index:end_index] += (np.dot(delta_output_gate[end_index:next_index], model.weights['hidden_outputgate'].T)
-                                                 + np.dot(delta_input_gate[end_index:next_index], model.weights['hidden_inputgate'].T)
-                                                 + np.dot(delta_forget_gate[end_index:next_index], model.weights['hidden_forgetgate'].T)
-                                                 + np.dot(delta_cell[end_index:next_index], model.weights['hidden_cell'].T))
-#                                                 + np.dot(delta_output[start_index:end_index], model.weights['hidden_output'].T))
+            hidden_deriv = hiddens[start_index:end_index] * (1 - hiddens[start_index:end_index]) * mask
+#            update_gate_deriv = update_gate[start_index:end_index] * (1 - update_gate[start_index:end_index]) * mask
+#            reset_gate_deriv = reset_gate[start_index:end_index] * (1 - reset_gate[start_index:end_index]) * mask
             
+#            part_cell_deriv = (1 + part_cell[start_index:end_index]) * (1 - part_cell[start_index:end_index])
+#            cell_deriv = 1 - np.tanh(cell[start_index:end_index]) ** 2
+#            part_cell_deriv *= mask
+#            cell_deriv *= mask
+            eps_hidden[start_index:end_index] += np.dot(eps_hidden[end_index:next_index], model.weights['hidden_hidden'].T)
+#                                                 + np.dot(delta_output[start_index:end_index], model.weights['hidden_output'].T))
+            eps_hidden[start_index:end_index] *= hidden_deriv
+#            if step > 0:
+#                delta_update_gate[start_index:end_index] = (eps_hidden[start_index:end_index] * (activation[start_index:end_index] - hiddens[prev_index:start_index])
+#                                                            * update_gate_deriv * mask)
+#            else:
+#                delta_update_gate[start_index:end_index] = (eps_hidden[start_index:end_index] * activation[start_index:end_index]
+#                                                            * update_gate_deriv * mask)
+    #        delta_update_gate[start_index:end_index] *= mask
+            
+#            delta_activation[start_index:end_index] = (eps_hidden[start_index:end_index] * update_gate[start_index:end_index] *
+#                                                       activation_deriv * mask)
+#            if step != 0:
+#                delta_reset_gate[start_index:end_index] = (np.dot(delta_activation[start_index:end_index], 
+#                                                                  model.weights['prevhidden_activation'].T) * 
+#                                                           hiddens[prev_index:start_index] * 
+#                                                           reset_gate_deriv * mask)
+#            else:
+#                delta_reset_gate[start_index:end_index] = 0.0
 #            if not self.single_prediction:
 #                eps_hidden[start_index:end_index] += np.dot(delta_output[start_index:end_index], model.weights['hidden_output'].T)
-            eps_hidden[start_index:end_index] *= mask
-            delta_output_gate[start_index:end_index] = eps_hidden[start_index:end_index] * (1 - output_gate[start_index:end_index]) * hiddens[start_index:end_index]
-            delta_output_gate[start_index:end_index] *= mask
-            eps_state[start_index:end_index] = (eps_hidden[start_index:end_index] * output_gate[start_index:end_index] * cell_deriv
-                                                + eps_state[end_index:next_index] * forget_gate[end_index:next_index]
-                                                + np.dot(delta_output_gate[start_index:end_index], model.weights['curcell_outputgate'].T)
-                                                + np.dot(delta_forget_gate[end_index:next_index], model.weights['prevcell_forgetgate'].T)
-                                                + np.dot(delta_input_gate[end_index:next_index], model.weights['prevcell_inputgate'].T))
-            eps_state[start_index:end_index] *= mask
-            delta_cell[start_index:end_index] = eps_state[start_index:end_index] * input_gate[start_index:end_index] * part_cell_deriv
-            delta_cell[start_index:end_index] *= mask
-            if step != 0:
-                delta_forget_gate[start_index:end_index] = (eps_state[start_index:end_index] * cell[prev_index:start_index] * 
-                                                            forget_gate[start_index:end_index] * (1 - forget_gate[start_index:end_index]))
-            else:
-                delta_forget_gate[start_index:end_index] = 0.0
-            delta_forget_gate[start_index:end_index] *= mask
-            delta_input_gate[start_index:end_index] = (eps_state[start_index:end_index] * part_cell[start_index:end_index] * 
-                                                       input_gate[start_index:end_index] * (1 - input_gate[start_index:end_index]))
-            delta_input_gate[start_index:end_index] *= mask
+            
+#            delta_output_gate[start_index:end_index] = eps_hidden[start_index:end_index] * (1 - output_gate[start_index:end_index]) * hiddens[start_index:end_index]
+#            delta_output_gate[start_index:end_index] *= mask
+#            eps_state[start_index:end_index] = (eps_hidden[start_index:end_index] * output_gate[start_index:end_index] * cell_deriv
+#                                                + eps_state[end_index:next_index] * forget_gate[end_index:next_index]
+#                                                + np.dot(delta_output_gate[start_index:end_index], model.weights['curcell_outputgate'].T)
+#                                                + np.dot(delta_forget_gate[end_index:next_index], model.weights['prevcell_forgetgate'].T)
+#                                                + np.dot(delta_input_gate[end_index:next_index], model.weights['prevcell_inputgate'].T))
+#            eps_state[start_index:end_index] *= mask
+#            delta_cell[start_index:end_index] = eps_state[start_index:end_index] * input_gate[start_index:end_index] * part_cell_deriv
+#            delta_cell[start_index:end_index] *= mask
+#            if step != 0:
+#                delta_forget_gate[start_index:end_index] = (eps_state[start_index:end_index] * cell[prev_index:start_index] * 
+#                                                            forget_gate[start_index:end_index] * (1 - forget_gate[start_index:end_index]))
+#            else:
+#                delta_forget_gate[start_index:end_index] = 0.0
+#            delta_forget_gate[start_index:end_index] *= mask
+#            delta_input_gate[start_index:end_index] = (eps_state[start_index:end_index] * part_cell[start_index:end_index] * 
+#                                                       input_gate[start_index:end_index] * (1 - input_gate[start_index:end_index]))
+#            delta_input_gate[start_index:end_index] *= mask
         #
-        delta_embedding = np.dot(delta_output_gate, model.weights['visible_outputgate'].T)
-        delta_embedding += np.dot(delta_input_gate, model.weights['visible_inputgate'].T)
-        delta_embedding += np.dot(delta_forget_gate, model.weights['visible_forgetgate'].T)
-        delta_embedding += np.dot(delta_cell, model.weights['visible_cell'].T)
+#        print eps_hidden
+#        print batch_inputs.ravel()
+#        print np.sum(eps_hidden, axis = 0)
+        if not self.dssm:
+            out_mat = ssp.dok_matrix((model.weights['visible_hidden'].shape[0], batch_inputs.size))
+            out_mat[(batch_inputs.ravel()), (np.arange(batch_inputs.size))] = 1.0
+            gradient_weights.weights['visible_hidden'] = out_mat.dot(eps_hidden)
+        else:
+            raise ValueError('DSSM Not Yet Implemented')
+        gradient_weights.bias['hidden'] += np.sum(eps_hidden, axis = 0)
+#        delta_embedding = np.dot(delta_update_gate, model.weights['visible_updategate'].T)
+#        delta_embedding += np.dot(delta_reset_gate, model.weights['visible_resetgate'].T)
+#        delta_embedding += np.dot(delta_activation, model.weights['visible_activation'].T)
+#        delta_embedding += np.dot(delta_cell, model.weights['visible_cell'].T)
 #        self.bias_keys = ['inputgate', 'forgetgate', 'outputgate', 'cell', 'output']
-        gradient_weights.bias['embedding'] += np.sum(delta_embedding, axis = 0)
-        gradient_weights.bias['inputgate'] += np.sum(delta_input_gate, axis = 0)
-        gradient_weights.bias['forgetgate'] += np.sum(delta_forget_gate, axis = 0)
-        gradient_weights.bias['outputgate'] += np.sum(delta_output_gate, axis = 0)
-        gradient_weights.bias['cell'] += np.sum(delta_cell, axis = 0)
+#        gradient_weights.bias['embedding'] += np.sum(delta_embedding, axis = 0)
+#        gradient_weights.bias['updategate'] += np.sum(delta_update_gate, axis = 0)
+#        gradient_weights.bias['resetgate'] += np.sum(delta_reset_gate, axis = 0)
+#        gradient_weights.bias['outputgate'] += np.sum(delta_output_gate, axis = 0)
+#        gradient_weights.bias['activation'] += np.sum(delta_activation, axis = 0)
         
         gradient_weights.bias['output'] += np.sum(delta_output, axis = 0)
+        gradient_weights.init_hiddens += np.sum(np.dot(eps_hidden[:batch_size], model.weights['hidden_hidden'].T), 
+                                                axis = 0)
+        
 #        if self.single_prediction:
 #            gradient_weights.bias['output'] += delta_output
 #        else:
@@ -1227,31 +1225,34 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
 #                             'hidden_inputgate', 'hidden_inputgate', 'hidden_outputgate', 'hidden_cell',
 #                             'prevcell_inputgate', 'prevcell_forgetgate', 'curcell_outputgate',
 #                             'hidden_output']
-        gradient_weights.weights['visible_inputgate'] += embedding.T.dot(delta_input_gate)
-        gradient_weights.weights['visible_forgetgate'] += embedding[batch_size:].T.dot(delta_forget_gate[batch_size:])
-        gradient_weights.weights['visible_outputgate'] += embedding.T.dot(delta_output_gate)
-        gradient_weights.weights['visible_cell'] = embedding.T.dot(delta_cell)
+#        gradient_weights.weights['visible_updategate'] += embedding.T.dot(delta_update_gate)
+#        gradient_weights.weights['visible_forgetgate'] += embedding[batch_size:].T.dot(delta_forget_gate[batch_size:])
+#        gradient_weights.weights['visible_resetgate'] += embedding.T.dot(delta_reset_gate)
+#        gradient_weights.weights['visible_activation'] = embedding.T.dot(delta_activation)
         
-        if not self.dssm:
-            linear_inputs = batch_inputs.ravel()
-            for step in range(linear_inputs.size):
-                gradient_weights.weights['embedding'][linear_inputs[step]] += delta_embedding[step]
-            
-        else: #DSSM
+#        if not self.dssm:
+#            linear_inputs = batch_inputs.ravel()
+#            for step in range(linear_inputs.size):
+#                gradient_weights.weights['embedding'][linear_inputs[step]] += delta_embedding[step]
+#            
+#        else: #DSSM
 #            print batch_inputs.shape
 #            print delta_embedding.shape
 #            print batch_inputs.T.dot(delta_embedding).shape
 #            print gradient_weights.weights['embedding'].shape
 #            raise ValueError('THIS SHOULD NOT DSSM')
-            gradient_weights.weights['embedding'] += self.make_dssm_batch_features(batch_inputs, fsl).T.dot(delta_embedding)
+#            gradient_weights.weights['embedding'] += batch_inputs.T.dot(delta_embedding)
         
         if num_observations > 1:
-            gradient_weights.weights['hidden_cell'] += np.dot(hiddens[:-batch_size].T, delta_cell[batch_size:])
-            gradient_weights.weights['hidden_inputgate'] += np.dot(hiddens[:-batch_size].T, delta_input_gate[batch_size:])
-            gradient_weights.weights['hidden_forgetgate'] += np.dot(hiddens[:-batch_size].T, delta_forget_gate[batch_size:])
-            gradient_weights.weights['hidden_outputgate'] += np.dot(hiddens[:-batch_size].T, delta_output_gate[batch_size:])
-            gradient_weights.weights['prevcell_inputgate'] += np.dot(cell[:-batch_size].T, delta_input_gate[batch_size:])
-            gradient_weights.weights['prevcell_forgetgate'] += np.dot(cell[:-batch_size].T, delta_forget_gate[batch_size:])
+            gradient_weights.weights['hidden_hidden'] += np.dot(hiddens[:-batch_size].T, eps_hidden[batch_size:])
+            gradient_weights.weights['hidden_hidden'] += np.dot(np.tile(model.init_hiddens, (batch_size, 1)).T, 
+                                                                eps_hidden[:batch_size])
+#            gradient_weights.weights['prevhidden_activation'] += np.dot((hiddens[:-batch_size]*reset_gate[batch_size:]).T, delta_activation[batch_size:])
+#            gradient_weights.weights['prevhidden_updategate'] += np.dot(hiddens[:-batch_size].T, delta_update_gate[batch_size:])
+#            gradient_weights.weights['prevhidden_resetgate'] += np.dot(hiddens[:-batch_size].T, delta_reset_gate[batch_size:])
+#            gradient_weights.weights['hidden_outputgate'] += np.dot(hiddens[:-batch_size].T, delta_output_gate[batch_size:])
+#            gradient_weights.weights['prevcell_inputgate'] += np.dot(cell[:-batch_size].T, delta_input_gate[batch_size:])
+#            gradient_weights.weights['prevcell_forgetgate'] += np.dot(cell[:-batch_size].T, delta_forget_gate[batch_size:])
 #        else: #not needed because gradient is already set to 0.0
 #            gradient_weights.weights['hidden_cell'] = 0.0
 #            gradient_weights.weights['hidden_inputgate'] = 0.0
@@ -1261,15 +1262,19 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
 #            gradient_weights.weights['prevcell_forgetgate'] = 0.0
         
         
-        gradient_weights.weights['curcell_outputgate'] += np.dot(cell.T, delta_output_gate)
-        
-        gradient_weights.weights['hidden_output'] += np.dot(hiddens.T, output)
+#        gradient_weights.weights['curcell_outputgate'] += np.dot(cell.T, delta_output_gate)
+#        print hiddens
+#        print fsl
+#        print batch_labels
+#        print delta_output
+        gradient_weights.weights['hidden_output'] = np.dot(hiddens.T, delta_output)
         if self.single_prediction:
 #            gradient_weights.weights['hidden_output'] += np.outer(hiddens[-1], output)
             delta_output[indices, batch_labels] += 1.0
+            delta_output[(output_mask), :] = 0
 #            delta_output[0][batch_label] += 1.0
         else:
-            raise ValueError('not yet implemented')
+            delta_output[np.arange(frame_labels.size), frame_labels] += 1.0
 #            gradient_weights.weights['hidden_output'] += np.dot(hiddens.T, output)
 #            for x in range(delta_output.shape[0]):
 #                delta_output[x][batch_label] += 1.0
@@ -1298,10 +1303,10 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 gradient_weights += model * l2_regularization_const
             sys.stdout.write("\r                                                                \r")
             print "checking gradient..."
-            finite_difference_model = LSTM_NNLM_Weight_with_embedding()
+            finite_difference_model = RNNLM_Weight()
             finite_difference_model.init_zero_weights(self.model.get_architecture(), verbose=False)
             
-            direction = LSTM_NNLM_Weight_with_embedding()
+            direction = RNNLM_Weight()
             direction.init_zero_weights(self.model.get_architecture(), verbose=False)
             epsilon = 1E-5
 #            print "at initial hiddens"
@@ -1311,7 +1316,13 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
 #                backward_loss = -np.sum(np.log(self.forward_pass_single_batch(batch_inputs, model = model - direction)[batch_indices, batch_labels]))
 #                finite_difference_model.init_hiddens[0][index] = (forward_loss - backward_loss) / (2 * epsilon)
 #                direction.init_hiddens[0][index] = 0.0
-            indices = np.arange(batch_labels.size)
+#            indices = np.arange(batch_labels.size)
+            frame_labels = self.make_frame_labels(fsl, batch_labels)
+            num_frames = sum(fsl)
+            indices = np.arange(num_frames)
+#            print "INDICES, FRAME_LABELS"
+#            print indices
+#            print frame_labels
             for key in direction.bias.keys():
                 print "at bias key", key
                 for index in range(direction.bias[key].size):
@@ -1321,8 +1332,8 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
 #                    print indices
 #                    print batch_labels
                     
-                    forward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model + direction)[indices,batch_labels]))
-                    backward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model - direction)[indices,batch_labels]))
+                    forward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model + direction, single_prediction = False)[indices,frame_labels]))
+                    backward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model - direction, single_prediction = False)[indices,frame_labels]))
                     finite_difference_model.bias[key][0][index] = (forward_loss - backward_loss) / (2 * epsilon)
                     direction.bias[key][0][index] = 0.0
             for key in direction.weights.keys():
@@ -1330,10 +1341,17 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 for index0 in range(direction.weights[key].shape[0]):
                     for index1 in range(direction.weights[key].shape[1]):
                         direction.weights[key][index0][index1] = epsilon
-                        forward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model + direction)[indices,batch_labels]))
-                        backward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model - direction)[indices,batch_labels]))
+                        forward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model + direction, single_prediction = False)[indices,frame_labels]))
+                        backward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model - direction, single_prediction = False)[indices,frame_labels]))
                         finite_difference_model.weights[key][index0][index1] = (forward_loss - backward_loss) / (2 * epsilon)
                         direction.weights[key][index0][index1] = 0.0
+            
+            for index1 in range(direction.init_hiddens.size):
+                direction.init_hiddens[0][index1] = epsilon
+                forward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model + direction, single_prediction = False)[indices,frame_labels]))
+                backward_loss = -np.sum(np.log(self.forward_pass_multi_batch(batch_inputs, fsl, model = model - direction, single_prediction = False)[indices,frame_labels]))
+                finite_difference_model.init_hiddens[0][index1] = (forward_loss - backward_loss) / (2 * epsilon)
+                direction.init_hiddens[0][index1] = 0.0
 
             for bias_name in self.model.bias_keys:
                 print "calculated gradient for %s bias" % bias_name
@@ -1347,6 +1365,11 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 print "finite difference approximation for %s weights" % weight_name
                 print finite_difference_model.weights[weight_name]
             
+            print "calculated gradient for init hiddens"
+            print gradient_weights.init_hiddens
+            print "finite difference approximation for init hiddens"
+            print finite_difference_model.init_hiddens
+            
             for bias_name in self.model.bias_keys:
                 print "gradient / finite_difference for %s bias" % bias_name
                 print gradient_weights.bias[bias_name] / (finite_difference_model.bias[bias_name] + 1E-20)
@@ -1354,7 +1377,9 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
             for weight_name in self.model.weights_keys:
                 print "gradient / finite_difference for %s weights" % weight_name
                 print gradient_weights.weights[weight_name] / (finite_difference_model.weights[weight_name] + 1E-20)
-                
+            
+            print "gradient / finite_difference for init hiddens"
+            print gradient_weights.init_hiddens / (finite_difference_model.init_hiddens + 1E-20)
             sys.exit()
         ##########################################################
     
@@ -1401,28 +1426,40 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
 #                print feature_sequence_lens[batch_index:end_index]
 #                print feature_sequence_lens[:10]
 #                print sum(feature_sequence_lens[batch_index:end_index])
-                if self.single_prediction:
-                    output = self.forward_pass_multi_batch(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], model=model)
-                else:
-                    output = self.forward_pass_multi_output(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], model=model)
+                output = self.forward_pass_multi_batch(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], model=model,
+                                                       single_prediction = self.single_prediction)
+#                if self.single_prediction:
+#                    
+#                else:
+#                    output = self.forward_pass_multi_(features[start_frame:end_frame], feature_sequence_lens[batch_index:end_index], model=model)
             else:
-                if self.single_prediction:
-#                    output = self.forward_pass(features[:max_seq_len,batch_index:end_index], 
-#                                               feature_sequence_lens[batch_index:end_index], model=model)
-                    output = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
-                                                           feature_sequence_lens[batch_index:end_index], model=model)
-                else:
-                    output = self.forward_pass_multi_output(features[:max_seq_len,batch_index:end_index], 
-                                                            feature_sequence_lens[batch_index:end_index], model=model)
+                output = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
+                                                       feature_sequence_lens[batch_index:end_index], model=model,
+                                                       single_prediction = self.single_prediction)
+#                if self.single_prediction:
+##                    output = self.forward_pass(features[:max_seq_len,batch_index:end_index], 
+##                                               feature_sequence_lens[batch_index:end_index], model=model)
+#                    output = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
+#                                                           feature_sequence_lens[batch_index:end_index], model=model)
+#                else:
+#                    output = self.forward_pass_multi_batch(features[:max_seq_len,batch_index:end_index], 
+#                                                            feature_sequence_lens[batch_index:end_index], model=model,
+#                                                            single_prediction = False)
+            
+            prediction = output.argmax(axis=1)
             if self.single_prediction:
                 cross_entropy += self.calculate_cross_entropy(output, label[:,1])
-                prediction = output.argmax(axis=1)
+                
                 num_correct += np.sum(prediction == label[:,1])
             else:
-                cross_entropy += self.calculate_cross_entropy_multi_output(output, feature_sequence_lens[batch_index:end_index], label[:,1])
-                for seq, fsl in enumerate(feature_sequence_lens[batch_index:end_index]):
-                    prediction = output[:fsl,seq,:].argmax(axis=1)
-                    num_correct += np.sum(prediction == label[seq,1])
+#                print label
+                frame_labels = self.make_frame_labels(feature_sequence_lens[batch_index:end_index], label[:,1])
+#                print frame_labels
+                cross_entropy += self.calculate_cross_entropy(output, frame_labels)
+                num_correct += np.sum(prediction == frame_labels)
+#                for seq, fsl in enumerate(feature_sequence_lens[batch_index:end_index]):
+#                    prediction = output[:fsl,seq,:].argmax(axis=1)
+#                    num_correct += np.sum(prediction == label[seq,1])
             #don't use calculate_classification_accuracy() because of possible rounding error
             #- (prediction.size - num_examples) #because of the way we handle features, where some observations are null, we want to remove those examples for calculating accuracy
             batch_index += classification_batch_size
@@ -1442,9 +1479,9 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         start_time = datetime.datetime.now()
         print "Training started at", start_time
         self.dropout = 0.0
-        prev_step = LSTM_NNLM_Weight_with_embedding()
+        prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
-        gradient = LSTM_NNLM_Weight_with_embedding()
+        gradient = RNNLM_Weight()
         gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
         if self.validation_feature_file_name is not None:
             cross_entropy, num_correct, num_examples, loss = self.calculate_classification_statistics(self.validation_features, self.validation_labels, self.validation_fsl, self.model)
@@ -1528,11 +1565,11 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         start_time = datetime.datetime.now()
         print "Training started at", start_time
         self.dropout = 0.0
-        prev_step = LSTM_NNLM_Weight_with_embedding()
+        prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
-        gradient = LSTM_NNLM_Weight_with_embedding()
+        gradient = RNNLM_Weight()
         gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
-        rms_weights = LSTM_NNLM_Weight_with_embedding()
+        rms_weights = RNNLM_Weight()
         rms_weights.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
         rms_weights = rms_weights + 1E-10
         if self.validation_feature_file_name is not None:
@@ -1638,9 +1675,9 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         start_time = datetime.datetime.now()
         print "Training started at", start_time
         self.dropout = 0.0
-        prev_step = LSTM_NNLM_Weight_with_embedding()
+        prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
-        gradient = LSTM_NNLM_Weight_with_embedding()
+        gradient = RNNLM_Weight()
         gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
 #        print self.model.get_architecture()
         if self.validation_feature_file_name is not None:
@@ -1756,9 +1793,9 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         start_time = datetime.datetime.now()
         print "Training started at", start_time
         self.dropout = 0.0
-        prev_step = LSTM_NNLM_Weight_with_embedding()
+        prev_step = RNNLM_Weight()
         prev_step.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
-        gradient = LSTM_NNLM_Weight_with_embedding()
+        gradient = RNNLM_Weight()
         gradient.init_zero_weights(self.model.get_architecture(), maxent = self.use_maxent)
         print self.model.get_architecture()
         if self.validation_feature_file_name is not None:
@@ -1779,8 +1816,6 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
         is_init = True
         init_decreases = 0
         self.model.write_weights(''.join([self.output_name, '_best_weights']))
-        
-        cumsum_fsl = np.cumsum(np.hstack((0, self.feature_sequence_lens)))
         for epoch_num in range(1000):
             print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
             print "Training for epoch started at", datetime.datetime.now()
@@ -1796,14 +1831,9 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                 
                 end_index = min(batch_index+self.backprop_batch_size, self.num_sequences)
                 batch_fsl = self.feature_sequence_lens[batch_index:end_index]
+                max_fsl = max(batch_fsl)
+                batch_features = self.features[:max_fsl, batch_index:end_index]
                 batch_labels = self.labels[batch_index:end_index,1]
-                if type(self.features) == ssp.csr_matrix:
-                    start_frame = cumsum_fsl[batch_index]
-                    end_frame = cumsum_fsl[end_index]
-                    batch_features = self.features[start_frame:end_frame]
-                else:
-                    max_fsl = max(batch_fsl)
-                    batch_features = self.features[:max_fsl, batch_index:end_index]
                 
 #                print batch_features
 #                print batch_label
@@ -1848,7 +1878,7 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
             else:
                 raise ValueError("validation feature file must exist")
 #            print prev_cross_entropy, cross_entropy
-            if cross_entropy * 1.001 < prev_cross_entropy: #cross_entropy + 0.001 * self.validation_labels.shape[0] < prev_cross_entropy:
+            if cross_entropy * 1.001 < prev_cross_entropy: #cross_entropy + 0.001 * self.validation_features.shape[0] < prev_cross_entropy:
                 is_init = False
                 prev_cross_entropy = cross_entropy
                 prev_num_correct = num_correct
@@ -1861,8 +1891,7 @@ class LSTM_Neural_Network_Addressee_Trainer(LSTM_Neural_Network_Addressee):
                     momentum_rate /= 2.0
             else:
                 if is_init: init_decreases += 1
-                if self.save_each_epoch:
-                    self.model.write_weights(''.join([self.output_name, '_epoch_', str(epoch_num+1)]))
+                self.model.write_weights(''.join([self.output_name, '_best_weights']))
                 if init_decreases == 15:
                     print "Tried to find initial learning rate, but failed, quitting"
                     break
@@ -1941,9 +1970,9 @@ if __name__ == '__main__':
             sys.exit()
     
     if mode == 'test':
-        test_object = LSTM_Neural_Network_Addressee_Tester(config_dictionary)
+        test_object = RNNLM_Neural_Network_Addressee_Tester(config_dictionary)
     else: #mode ='train'
-        train_object = LSTM_Neural_Network_Addressee_Trainer(config_dictionary)
+        train_object = RNNLM_Neural_Network_Addressee_Trainer(config_dictionary)
         train_object.backprop_steepest_descent_multi_batch_semi_newbob()
 #        train_object.backprop_steepest_descent_single_batch_semi_newbob()
 #        train_object.backprop_steepest_descent_single_batch()

@@ -808,11 +808,11 @@ class DSSMNNLM_Trainer(DSSM_Neural_Network_Language_Model):
                 cur_xent = self.calculate_gradient_single_batch(batch_features, batch_labels, gradient, return_cross_entropy = True, 
                                                                 check_gradient = False)
                 cross_entropy += cur_xent 
-#                per_done = float(batch_index)/self.num_sequences*100
-#                sys.stdout.write("\r                                                                \r") #clear line
-#                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
-#                ppp = cross_entropy / end_frame
-#                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
+                per_done = float(batch_index)/self.num_sequences*100
+                sys.stdout.write("\r                                                                \r") #clear line
+                sys.stdout.write("\r%.1f%% done " % per_done), sys.stdout.flush()
+                ppp = cross_entropy / end_frame
+                sys.stdout.write("train X-ent: %f " % ppp), sys.stdout.flush()
                 gradient *= -learning_rate
                 if self.l2_regularization_const > 0.0:
                     self.model *= (1-self.l2_regularization_const) #l2 regularization_const
@@ -925,6 +925,6 @@ if __name__ == '__main__':
         test_object = DSSMNNLM_Tester(config_dictionary)
     else: #mode ='train'
         train_object = DSSMNNLM_Trainer(config_dictionary)
-        train_object.train()
+        train_object.backprop_steepest_descent_single_batch_semi_newbob()
         
     print "Finished without Runtime Error!" 
