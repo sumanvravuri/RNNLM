@@ -348,20 +348,20 @@ class RNNLM_Neural_Network_Addressee(object, Vector_Math):
         if model == None:
             model = self.model
         
-        if type(inputs) == ssp.csr_matrix:
-            raise ValueError('DSSM not yet implemented')
+#        if type(inputs) == ssp.csr_matrix:
+#            raise ValueError('DSSM not yet implemented')
 #        print inputs.shape
         num_observations, batch_size = max(feature_sequence_lens), feature_sequence_lens.size
         mask = np.zeros((batch_size, model.weights['visible_hidden'].shape[1]))
         if not self.dssm:
             linear_feats = inputs.ravel()
-            hiddens = model.weights['embedding'][(linear_feats),:]# + model.bias['embedding']
+            hiddens = model.weights['visible_hidden'][(linear_feats),:]# + model.bias['visible_hidden']
         else:
-            hiddens = self.make_dssm_batch_features(inputs, feature_sequence_lens).dot(model.weights['embedding'])
+            hiddens = self.make_dssm_batch_features(inputs, feature_sequence_lens).dot(model.weights['visible_hidden'])
 #        if len(inputs.shape) != 1: #means we are using DSSM
-#            embedding = inputs.dot(model.weights['embedding']) + model.bias['embedding']
+#            embedding = inputs.dot(model.weights['visible_hidden']) + model.bias['visible_hidden']
 #        else:
-#            embedding = model.weights['embedding'][(inputs),:] + model.bias['embedding']
+#            embedding = model.weights['visible_hidden'][(inputs),:] + model.bias['visible_hidden']
         
 #        update_gate = self.weight_matrix_multiply(embedding, model.weights['visible_updategate'], model.bias['updategate'])#hack because of crappy sparse matrix support
 #        reset_gate = self.weight_matrix_multiply(embedding, model.weights['visible_resetgate'], model.bias['resetgate'])
@@ -889,7 +889,7 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
         delta_embedding += np.dot(delta_forget_gate, model.weights['visible_forgetgate'].T)
         delta_embedding += np.dot(delta_cell, model.weights['visible_cell'].T)
 #        self.bias_keys = ['inputgate', 'forgetgate', 'outputgate', 'cell', 'output']
-        gradient_weights.bias['embedding'] += np.sum(delta_embedding, axis = 0)
+        gradient_weights.bias['visible_hidden'] += np.sum(delta_embedding, axis = 0)
         gradient_weights.bias['inputgate'] += np.sum(delta_input_gate, axis = 0)
         gradient_weights.bias['forgetgate'] += np.sum(delta_forget_gate, axis = 0)
         gradient_weights.bias['outputgate'] += np.sum(delta_output_gate, axis = 0)
@@ -910,14 +910,14 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
         
         if not self.dssm:
             for step in range(num_observations):
-                gradient_weights.weights['embedding'][batch_inputs[step]] += delta_embedding[step]
+                gradient_weights.weights['visible_hidden'][batch_inputs[step]] += delta_embedding[step]
             
         else: #DSSM
 #            print batch_inputs.shape
 #            print delta_embedding.shape
 #            print batch_inputs.T.dot(delta_embedding).shape
-#            print gradient_weights.weights['embedding'].shape
-            gradient_weights.weights['embedding'] += batch_inputs.T.dot(delta_embedding)
+#            print gradient_weights.weights['visible_hidden'].shape
+            gradient_weights.weights['visible_hidden'] += batch_inputs.T.dot(delta_embedding)
         
         if num_observations > 1:
             gradient_weights.weights['hidden_cell'] += np.dot(hiddens[:-1].T, delta_cell[1:])
@@ -1199,14 +1199,14 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
             out_mat[(batch_inputs.ravel()), (np.arange(batch_inputs.size))] = 1.0
             gradient_weights.weights['visible_hidden'] = out_mat.dot(eps_hidden)
         else:
-            raise ValueError('DSSM Not Yet Implemented')
+            gradient_weights.weights['visible_hidden'] += self.make_dssm_batch_features(batch_inputs, fsl).T.dot(eps_hidden)
         gradient_weights.bias['hidden'] += np.sum(eps_hidden, axis = 0)
 #        delta_embedding = np.dot(delta_update_gate, model.weights['visible_updategate'].T)
 #        delta_embedding += np.dot(delta_reset_gate, model.weights['visible_resetgate'].T)
 #        delta_embedding += np.dot(delta_activation, model.weights['visible_activation'].T)
 #        delta_embedding += np.dot(delta_cell, model.weights['visible_cell'].T)
 #        self.bias_keys = ['inputgate', 'forgetgate', 'outputgate', 'cell', 'output']
-#        gradient_weights.bias['embedding'] += np.sum(delta_embedding, axis = 0)
+#        gradient_weights.bias['visible_hidden'] += np.sum(delta_embedding, axis = 0)
 #        gradient_weights.bias['updategate'] += np.sum(delta_update_gate, axis = 0)
 #        gradient_weights.bias['resetgate'] += np.sum(delta_reset_gate, axis = 0)
 #        gradient_weights.bias['outputgate'] += np.sum(delta_output_gate, axis = 0)
@@ -1233,15 +1233,15 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
 #        if not self.dssm:
 #            linear_inputs = batch_inputs.ravel()
 #            for step in range(linear_inputs.size):
-#                gradient_weights.weights['embedding'][linear_inputs[step]] += delta_embedding[step]
+#                gradient_weights.weights['visible_hidden'][linear_inputs[step]] += delta_embedding[step]
 #            
 #        else: #DSSM
 #            print batch_inputs.shape
 #            print delta_embedding.shape
 #            print batch_inputs.T.dot(delta_embedding).shape
-#            print gradient_weights.weights['embedding'].shape
+#            print gradient_weights.weights['visible_hidden'].shape
 #            raise ValueError('THIS SHOULD NOT DSSM')
-#            gradient_weights.weights['embedding'] += batch_inputs.T.dot(delta_embedding)
+#            gradient_weights.weights['visible_hidden'] += batch_inputs.T.dot(delta_embedding)
         
         if num_observations > 1:
             gradient_weights.weights['hidden_hidden'] += np.dot(hiddens[:-batch_size].T, eps_hidden[batch_size:])
@@ -1816,6 +1816,7 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
         is_init = True
         init_decreases = 0
         self.model.write_weights(''.join([self.output_name, '_best_weights']))
+        cumsum_fsl = np.cumsum(np.hstack((0, self.feature_sequence_lens)))
         for epoch_num in range(1000):
             print "At epoch", epoch_num+1, "with learning rate", learning_rate, "and momentum", momentum_rate
             print "Training for epoch started at", datetime.datetime.now()
@@ -1831,9 +1832,17 @@ class RNNLM_Neural_Network_Addressee_Trainer(RNNLM_Neural_Network_Addressee):
                 
                 end_index = min(batch_index+self.backprop_batch_size, self.num_sequences)
                 batch_fsl = self.feature_sequence_lens[batch_index:end_index]
-                max_fsl = max(batch_fsl)
-                batch_features = self.features[:max_fsl, batch_index:end_index]
+#                max_fsl = max(batch_fsl)
+#                batch_features = self.features[:max_fsl, batch_index:end_index]
                 batch_labels = self.labels[batch_index:end_index,1]
+                
+                if type(self.features) == ssp.csr_matrix:
+                    start_frame = cumsum_fsl[batch_index]
+                    end_frame = cumsum_fsl[end_index]
+                    batch_features = self.features[start_frame:end_frame]
+                else:
+                    max_fsl = max(batch_fsl)
+                    batch_features = self.features[:max_fsl, batch_index:end_index]
                 
 #                print batch_features
 #                print batch_label
